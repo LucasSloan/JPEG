@@ -145,30 +145,19 @@ id = 0xd9
 */
 
 void bitwriter(int* counter, uint8_t* buffer, bool bit, FILE* fp) {
-  //printf("bit: %d\t", bit);
-  //printf("buffer before: %d\t", *buffer);
   if (bit) {
-    //printf("We tripped the if statement!");
     *buffer = *buffer + (1 << *counter);
   }
-  //printf("buffer after: %d\n", *buffer);
   if (*counter == 0) {
-    //printf("\nbufferdump: ");
-    for (int k = 7; k >= 0; k--) {
-      //printf("%d", (*buffer & 1<<k)>>k);
-    }
-    //printf("\n");
     fwrite(buffer, sizeof(uint8_t), 1, fp);
-    /*if (*buffer = 0xff) {
+    if (*buffer == 0xff) {
       *buffer = 0;
       fwrite(buffer, sizeof(uint8_t), 1, fp);
-      }*/
+    }
     *buffer = 0;
     *counter = 8;
   }
-  //printf("counter: %d\n", *counter);
   *counter = *counter - 1;
-  //printf("counter: %d\n", *counter);
 }
 
 void flushbuffer(int* counter, uint8_t* buffer, FILE* fp) {
@@ -191,6 +180,4 @@ void finishfile(int* counter, uint8_t* buffer, FILE* fp) {
   fwrite(&eoi, sizeof(EOI), 1, fp);
 
   fclose(fp);
-
-  printf("flushed remaining bits\n");
 }
