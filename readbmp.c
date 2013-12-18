@@ -716,8 +716,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	(bfh.type != TYPE_ICO_COLOR) &&
 	(bfh.type != TYPE_PTR_COLOR))
 	return 1000;
-    
-    printf("Read the file header\n");
 
     /*
      * Immediately following a file header is always the bitmap header.  Read
@@ -737,8 +735,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	(bh.width < 1) ||
 	(bh.height == 0))
 	return 1001;
-    
-    printf("Read the bitmap header\n");
 
     /*
      * If the height is negative, then this is a Windows bitmap whose origin
@@ -753,8 +749,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
     }
     else
 	inverted = 1;
-
-    printf("Checked for inversion\n");
     
     /*
      * Now, sanity check a few fields that are valid, but I don't have code to
@@ -769,8 +763,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	 (bh.numBitsPerPlane != 24)) ||
 	(bh.compressionScheme != COMPRESSION_NONE))
 	return 1002;
-
-    printf("Checked bits, compression\n");
     
     /*
      * Allocate and read the color table.  The file pointer has been
@@ -795,8 +787,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	    return rc;
 	}
     }
-
-    printf("Read the color table\n");
     
     /*
      * We're at the end of the color table.  Preserve this position.  We'll
@@ -804,8 +794,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
      * function. 
      */
     endPos = ftell(fp);
-
-    printf("Preserved position\n");
 
     /*
      * Allocate the array of pixels and fill it in.
@@ -817,8 +805,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	free (colorTable);
 	return 1004;
     }
-
-    printf("Allocated and filled pixel array\n");
     
     /*
      * Seek to the bits
@@ -830,8 +816,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	free (image);
 	return rc;
     }
-
-    printf("Sought the bits\n");
     
     /*
      * Read the bits.  If code for decompressing bits should be written,
@@ -849,16 +833,12 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
 	free(image);
 	return rc;
     }
-    
-    printf("Read the bits\n");
 
     /*
      * If the origin is lower-left, flip the image upside down
      */
     if (inverted)
 	reflectYRGB(image, bh.width, bh.height);
-
-    printf("Inverted the image\n");
 
     /*
      * Return the output values.  Set the file pointer to the byte after the
@@ -868,8 +848,6 @@ int readSingleImageBMP(FILE *fp, RGB **argb, UINT32 *width, UINT32 *height)
     *width = bh.width;
     *height = bh.height;
     fseek(fp, endPos, SEEK_SET);
-
-    printf("Set return values\n");
 
     /*
      * Clean up and return.  Note that we don't return the color table.  This

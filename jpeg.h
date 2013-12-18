@@ -29,14 +29,18 @@ xthumb = 0
 ythumb = 0
 */
 
-typedef struct _DQT
+typedef struct _DQTHeader
 {
   uint8_t marker;
   uint8_t type;
   uint8_t length[2];
+} DQTH;
+
+typedef struct _DQTTable
+{
   uint8_t preid;
   uint8_t table[64];
-} DQT;
+} DQTT;
 
 /*
 marker = 0xff
