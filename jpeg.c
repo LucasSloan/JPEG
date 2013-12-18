@@ -12,6 +12,9 @@
 #include "readbmp.h"
 #include "readbmp.c"
 #include "jpeg_header.h"
+#include <sys/time.h>
+#include <omp.h>
+#include <immintrin.h>
 #define PI 3.14159265358979323846
 
 int length[10] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
@@ -21,6 +24,9 @@ int main(int argc, char *argv[]) {
   UINT32* width = (UINT32*) malloc(sizeof(UINT32*));
   UINT32* height = (UINT32*) malloc(sizeof(UINT32*));
   FILE *fp;
+  struct timeval tv1, tv2;
+  double time;
+
 
   int num_colors = 3;
 
@@ -31,7 +37,14 @@ int main(int argc, char *argv[]) {
     return 2;
   }
 
+  gettimeofday(&tv1, 0);
   readSingleImageBMP(fp, argb, width, height);
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("Read BMP: %f seconds.\n", time);
+
 
   fclose(fp);
 
@@ -48,6 +61,7 @@ int main(int argc, char *argv[]) {
   int* Cbout = malloc(sizeof(int) * *width * *height);
   int* Crout = malloc(sizeof(int) * *width * *height);
 
+  gettimeofday(&tv1, 0);
   for (int row = 0; row < *height; row++) {
     for (int col = 0; col < *width; col++) {
       pixel = image[row * *width + col];
@@ -56,14 +70,30 @@ int main(int argc, char *argv[]) {
       Cr[row * *width + col] = 128 + 0.5*pixel.red - 0.418688*pixel.green - 0.081312*pixel.blue;
     }
   }
+  gettimeofday(&tv2, 0);
 
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("Transform colorspace: %f seconds.\n", time);
+
+  float cosvals[8][8];
+
+  for (int i = 0; i < 8; i++) {
+    for (int j = 0; j < 8; j++) {
+      cosvals[i][j] = cos(PI/8.0*(i+0.5)*j);
+    }
+  }
+
+  gettimeofday(&tv1, 0);
+  #pragma omp parallel for
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
       int head_pointer = bcol*8 + brow * 8 * *width;
       for (int rrow = 0;  rrow < 8; rrow++) {
         for (int ccol = 0; ccol < 8; ccol++) {
           float temp1 = 0.0, temp2 = 0.0, temp3 = 0.0;
-          float au, av;
+          float au, av, auv, auvc, auvcc;
+          int offset1, offset2;
           if (rrow == 0) {
             au = sqrt(1.0/8.0);
 	  } else {
@@ -74,11 +104,16 @@ int main(int argc, char *argv[]) {
 	  } else {
             av = sqrt(2.0/8.0);
           }
+          auv = au*av;
           for (int x = 0; x < 8; x++) {
+            auvc = auv * cosvals[x][ccol];
+            offset1 = head_pointer + x;
             for (int y = 0; y < 8; y++) {
-              temp1 += au * av * (Y[head_pointer + (y * *width) + x]-128) * cos(PI/8.0*(x+0.5)*ccol) * cos(PI/8.0*(y+0.5)*rrow);
-              temp2 += au * av * (Cb[head_pointer + (y * *width) + x]-128) * cos(PI/8.0*(x+0.5)*ccol) * cos(PI/8.0*(y+0.5)*rrow);
-              temp3 += au * av * (Cr[head_pointer + (y * *width) + x]-128) * cos(PI/8.0*(x+0.5)*ccol) * cos(PI/8.0*(y+0.5)*rrow);
+              auvcc = auvc * cosvals[y][rrow];
+              offset2 = offset1 + y * *width;
+              temp1 += (Y[offset2]-128)*auvcc;
+	      temp2 += (Cb[offset2]-128)*auvcc;
+	      temp3 += (Cr[offset2]-128)*auvcc;
 	    }
 	  }
 	  Ye[head_pointer + (rrow * *width) + ccol] = temp1;
@@ -89,6 +124,13 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("DCT: %f seconds.\n", time);
+
+  gettimeofday(&tv1, 0);
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
       int head_pointer = bcol*8 + brow * 8 * *width;
@@ -102,6 +144,11 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("Quantize: %f seconds.\n", time);
 
   int run = 0;
   int amplitude;
@@ -120,8 +167,16 @@ int main(int argc, char *argv[]) {
   }
 
   fp = fopen(argv[2], "wb");
-  output_header(fp, *height, *width, num_colors, codes, sizes);
 
+  gettimeofday(&tv1, 0);
+  output_header(fp, *height, *width, num_colors, codes, sizes);
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("Generate headers: %f seconds.\n", time);
+
+  gettimeofday(&tv1, 0);
   for (int z = 0; z < *height * *width; z += 64) {
     for (int w = 0; w < num_colors; w++) {
       if (w == 0) {
@@ -187,6 +242,11 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  printf("Write to file: %f seconds.\n", time);
 
   finishfile(&counter, &buffer, fp);
 }
