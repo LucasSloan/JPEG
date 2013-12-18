@@ -85,41 +85,251 @@ int main(int argc, char *argv[]) {
   }
 
   gettimeofday(&tv1, 0);
-  #pragma omp parallel for
+  float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
+  avload[0] =  sqrt(1.0/8.0);
+  __m256 row0, row1, row2, row3, row4, row5, row6, row7;
+  __m256 loader;
+  __m256 temp;
+  __m256 minus128 = _mm256_set1_ps(-128.0);
+  __m256 av = _mm256_loadu_ps(&avload[0]), au1 = _mm256_broadcast_ss(&avload[0]), au2 = _mm256_broadcast_ss(&avload[1]);
+  __m256 avxcos;
+
+  float writer[8];
+
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
       int head_pointer = bcol*8 + brow * 8 * *width;
-      for (int rrow = 0;  rrow < 8; rrow++) {
-        for (int ccol = 0; ccol < 8; ccol++) {
-          float temp1 = 0.0, temp2 = 0.0, temp3 = 0.0;
-          float au, av, auv, auvc, auvcc;
-          int offset1, offset2;
-          if (rrow == 0) {
-            au = sqrt(1.0/8.0);
-	  } else {
-            au = sqrt(2.0/8.0);
-          }
-          if (ccol == 0) {
-            av = sqrt(1.0/8.0);
-	  } else {
-            av = sqrt(2.0/8.0);
-          }
-          auv = au*av;
-          for (int x = 0; x < 8; x++) {
-            auvc = auv * cosvals[x][ccol];
-            offset1 = head_pointer + x;
-            for (int y = 0; y < 8; y++) {
-              auvcc = auvc * cosvals[y][rrow];
-              offset2 = offset1 + y * *width;
-              temp1 += (Y[offset2]-128)*auvcc;
-	      temp2 += (Cb[offset2]-128)*auvcc;
-	      temp3 += (Cr[offset2]-128)*auvcc;
-	    }
-	  }
-	  Ye[head_pointer + (rrow * *width) + ccol] = temp1;
-	  Cbe[head_pointer + (rrow * *width) + ccol] = temp2;
-	  Cre[head_pointer + (rrow * *width) + ccol] = temp3;
+      row0 = _mm256_setzero_ps();
+      row1 = _mm256_setzero_ps();
+      row2 = _mm256_setzero_ps();
+      row3 = _mm256_setzero_ps();
+      row4 = _mm256_setzero_ps();
+      row5 = _mm256_setzero_ps();
+      row6 = _mm256_setzero_ps();
+      row7 = _mm256_setzero_ps();
+      for (int x = 0; x < 8; x++) {
+	for (int y = 0; y < 8; y++) {
+	  loader = _mm256_broadcast_ss(&Y[head_pointer+x+(y * *width)]);
+          loader = _mm256_add_ps(loader, minus128);
+          loader = _mm256_mul_ps(loader, av);
+          avxcos = _mm256_loadu_ps(&cosvals[x][0]);
+	  loader = _mm256_mul_ps(loader, avxcos);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
+	  temp = _mm256_mul_ps(temp, au1);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row0 = _mm256_add_ps(row0, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row1 = _mm256_add_ps(row1, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row2 = _mm256_add_ps(row2, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row3 = _mm256_add_ps(row3, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row4 = _mm256_add_ps(row4, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row5 = _mm256_add_ps(row5, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row6 = _mm256_add_ps(row6, temp);
+
+          temp = loader;
+          avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+	  temp = _mm256_mul_ps(temp, au2);
+          temp = _mm256_mul_ps(temp, avxcos);
+          row7 = _mm256_add_ps(row7, temp);
 	}
+      }
+      _mm256_storeu_ps(&Ye[head_pointer], row0);
+      _mm256_storeu_ps(&Ye[head_pointer + *width], row1);
+      _mm256_storeu_ps(&Ye[head_pointer + (2 * *width)], row2);
+      _mm256_storeu_ps(&Ye[head_pointer + (3 * *width)], row3);
+      _mm256_storeu_ps(&Ye[head_pointer + (4 * *width)], row4);
+      _mm256_storeu_ps(&Ye[head_pointer + (5 * *width)], row5);
+      _mm256_storeu_ps(&Ye[head_pointer + (6 * *width)], row6);
+      _mm256_storeu_ps(&Ye[head_pointer + (7 * *width)], row7);
+    }
+  }
+
+  if (num_colors > 1) {
+    for (int brow = 0; brow < *height/8; brow++) {
+      for (int bcol = 0; bcol < *width/8; bcol++) {
+	int head_pointer = bcol*8 + brow * 8 * *width;
+	row0 = _mm256_setzero_ps();
+	row1 = _mm256_setzero_ps();
+	row2 = _mm256_setzero_ps();
+	row3 = _mm256_setzero_ps();
+	row4 = _mm256_setzero_ps();
+	row5 = _mm256_setzero_ps();
+	row6 = _mm256_setzero_ps();
+	row7 = _mm256_setzero_ps();
+	for (int x = 0; x < 8; x++) {
+	  for (int y = 0; y < 8; y++) {
+	    loader = _mm256_broadcast_ss(&Cb[head_pointer+x+(y * *width)]);
+	    loader = _mm256_add_ps(loader, minus128);
+	    loader = _mm256_mul_ps(loader, av);
+	    avxcos = _mm256_loadu_ps(&cosvals[x][0]);
+	    loader = _mm256_mul_ps(loader, avxcos);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
+	    temp = _mm256_mul_ps(temp, au1);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row0 = _mm256_add_ps(row0, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row1 = _mm256_add_ps(row1, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row2 = _mm256_add_ps(row2, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row3 = _mm256_add_ps(row3, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row4 = _mm256_add_ps(row4, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row5 = _mm256_add_ps(row5, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row6 = _mm256_add_ps(row6, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row7 = _mm256_add_ps(row7, temp);
+	  }
+	}
+	_mm256_storeu_ps(&Cbe[head_pointer], row0);
+	_mm256_storeu_ps(&Cbe[head_pointer + *width], row1);
+	_mm256_storeu_ps(&Cbe[head_pointer + (2 * *width)], row2);
+	_mm256_storeu_ps(&Cbe[head_pointer + (3 * *width)], row3);
+	_mm256_storeu_ps(&Cbe[head_pointer + (4 * *width)], row4);
+	_mm256_storeu_ps(&Cbe[head_pointer + (5 * *width)], row5);
+	_mm256_storeu_ps(&Cbe[head_pointer + (6 * *width)], row6);
+	_mm256_storeu_ps(&Cbe[head_pointer + (7 * *width)], row7);
+      }
+    }  
+    for (int brow = 0; brow < *height/8; brow++) {
+      for (int bcol = 0; bcol < *width/8; bcol++) {
+	int head_pointer = bcol*8 + brow * 8 * *width;
+	row0 = _mm256_setzero_ps();
+	row1 = _mm256_setzero_ps();
+	row2 = _mm256_setzero_ps();
+	row3 = _mm256_setzero_ps();
+	row4 = _mm256_setzero_ps();
+	row5 = _mm256_setzero_ps();
+	row6 = _mm256_setzero_ps();
+	row7 = _mm256_setzero_ps();
+	for (int x = 0; x < 8; x++) {
+	  for (int y = 0; y < 8; y++) {
+	    loader = _mm256_broadcast_ss(&Cr[head_pointer+x+(y * *width)]);
+	    loader = _mm256_add_ps(loader, minus128);
+	    loader = _mm256_mul_ps(loader, av);
+	    avxcos = _mm256_loadu_ps(&cosvals[x][0]);
+	    loader = _mm256_mul_ps(loader, avxcos);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
+	    temp = _mm256_mul_ps(temp, au1);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row0 = _mm256_add_ps(row0, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row1 = _mm256_add_ps(row1, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row2 = _mm256_add_ps(row2, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row3 = _mm256_add_ps(row3, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row4 = _mm256_add_ps(row4, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row5 = _mm256_add_ps(row5, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row6 = _mm256_add_ps(row6, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+	    temp = _mm256_mul_ps(temp, au2);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row7 = _mm256_add_ps(row7, temp);
+	  }
+	}
+	_mm256_storeu_ps(&Cre[head_pointer], row0);
+	_mm256_storeu_ps(&Cre[head_pointer + *width], row1);
+	_mm256_storeu_ps(&Cre[head_pointer + (2 * *width)], row2);
+	_mm256_storeu_ps(&Cre[head_pointer + (3 * *width)], row3);
+	_mm256_storeu_ps(&Cre[head_pointer + (4 * *width)], row4);
+	_mm256_storeu_ps(&Cre[head_pointer + (5 * *width)], row5);
+	_mm256_storeu_ps(&Cre[head_pointer + (6 * *width)], row6);
+	_mm256_storeu_ps(&Cre[head_pointer + (7 * *width)], row7);
       }
     }
   }
