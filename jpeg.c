@@ -24,7 +24,7 @@ int main(int argc, char *argv[]) {
   UINT32* width = (UINT32*) malloc(sizeof(UINT32*));
   UINT32* height = (UINT32*) malloc(sizeof(UINT32*));
   FILE *fp;
-  struct timeval tv1, tv2;
+  struct timeval tv1, tv2, tv3, tv4;
   double time;
 
 
@@ -38,6 +38,7 @@ int main(int argc, char *argv[]) {
   }
 
   gettimeofday(&tv1, 0);
+  gettimeofday(&tv3, 0);
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
 
@@ -85,6 +86,8 @@ int main(int argc, char *argv[]) {
   }
 
   gettimeofday(&tv1, 0);
+#pragma omp parallel
+{
   float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
   avload[0] =  sqrt(1.0/8.0);
   __m256 row0, row1, row2, row3, row4, row5, row6, row7;
@@ -96,6 +99,7 @@ int main(int argc, char *argv[]) {
 
   float writer[8];
 
+#pragma omp for
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
       int head_pointer = bcol*8 + brow * 8 * *width;
@@ -176,6 +180,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (num_colors > 1) {
+#pragma omp for
     for (int brow = 0; brow < *height/8; brow++) {
       for (int bcol = 0; bcol < *width/8; bcol++) {
 	int head_pointer = bcol*8 + brow * 8 * *width;
@@ -253,7 +258,8 @@ int main(int argc, char *argv[]) {
 	_mm256_storeu_ps(&Cbe[head_pointer + (6 * *width)], row6);
 	_mm256_storeu_ps(&Cbe[head_pointer + (7 * *width)], row7);
       }
-    }  
+    }
+#pragma omp for
     for (int brow = 0; brow < *height/8; brow++) {
       for (int bcol = 0; bcol < *width/8; bcol++) {
 	int head_pointer = bcol*8 + brow * 8 * *width;
@@ -333,6 +339,8 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+ }
+
 
   gettimeofday(&tv2, 0);
 
@@ -459,4 +467,10 @@ int main(int argc, char *argv[]) {
   printf("Write to file: %f seconds.\n", time);
 
   finishfile(&counter, &buffer, fp);
+
+  gettimeofday(&tv4, 0);
+  time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
+
+  printf("Total: %f seconds.\n", time);
+
 }
