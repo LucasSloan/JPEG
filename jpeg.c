@@ -29,6 +29,8 @@ int main(int argc, char *argv[]) {
 
 
   int num_colors = 3;
+  if (argc == 4 && strcmp(argv[3],"-gs") == 0)
+    num_colors = 1;
 
   fp = fopen(argv[1], "rb");
 
@@ -37,8 +39,8 @@ int main(int argc, char *argv[]) {
     return 2;
   }
 
-  gettimeofday(&tv1, 0);
   gettimeofday(&tv3, 0);
+  gettimeofday(&tv1, 0);
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
 
@@ -355,9 +357,9 @@ int main(int argc, char *argv[]) {
       for (int rrow = 0;  rrow < 8; rrow++) {
         for (int ccol = 0; ccol < 8; ccol++) {
           int pos = zigzag[rrow*8 + ccol];
-          Yout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Ye[head_pointer + (pos/8 * *width) + pos%8] / s_std_lum_quant[pos]);
-          Cbout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cbe[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[pos]);
-          Crout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cre[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[pos]);
+          Yout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Ye[head_pointer + (pos/8 * *width) + pos%8] / s_std_lum_quant[rrow*8+ccol]);
+          Cbout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cbe[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[rrow*8+ccol]);
+          Crout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cre[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[rrow*8+ccol]);
 	}
       }
     }

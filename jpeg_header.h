@@ -58,7 +58,7 @@ void output_header(FILE* fp, int height, int width, int num_colors, uint16_t** c
 
   dqtl.preid = 0x00;
   for (int i = 0; i < 64; i++) {
-    dqtl.table[i] = s_std_lum_quant[zigzag[i]];
+    dqtl.table[i] = s_std_lum_quant[i];
   }
 
   fwrite(&dqt, sizeof(DQTH), 1, fp);
@@ -68,7 +68,7 @@ void output_header(FILE* fp, int height, int width, int num_colors, uint16_t** c
     DQTT dqtc;
     dqtc.preid = 0x01;
     for (int i = 0; i < 64; i++) {
-      dqtc.table[i] = s_std_croma_quant[zigzag[i]];
+      dqtc.table[i] = s_std_croma_quant[i];
     }
     fwrite(&dqtc, sizeof(DQTT), 1, fp);
   }

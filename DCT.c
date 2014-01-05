@@ -64,7 +64,7 @@ int quant[64] = {16 , 11 , 10 , 16 , 24 , 40 , 51 , 61 , 12 , 12 , 14 , 19 , 26 
       for (int rrow = 0;  rrow < 8; rrow++) {
         for (int ccol = 0; ccol < 8; ccol++) {
           int pos = zigzag[rrow*8 + ccol];
-          sout[row * width + col + rrow*8 + ccol] = round(out[(row+ pos/8) * width + col + pos%8] / quant[pos]);
+          sout[row * width + col + rrow*8 + ccol] = round(out[(row+ pos/8) * width + col + pos%8] / quant[rrow*8+ccol]);
 	}
       }
     }
@@ -86,8 +86,15 @@ int quant[64] = {16 , 11 , 10 , 16 , 24 , 40 , 51 , 61 , 12 , 12 , 14 , 19 , 26 
   uint8_t* acsizes = malloc(sizeof(uint8_t) * 256);
   uint8_t* dcsizes = malloc(sizeof(uint8_t) * 256);
 
+  uint16_t** codes = malloc(sizeof(uint16_t*) * 2);
+  codes[0] = accodes;
+  codes[1] = dccodes;
+  uint8_t** sizes = malloc(sizeof(uint8_t*) * 2);
+  sizes[0] = acsizes;
+  sizes[1] = dcsizes;
+
   fp = fopen(argv[1], "wb");
-  output_header(fp, height, width, accodes, dccodes, acsizes, dcsizes);
+  output_header(fp, height, width, 1, codes, sizes);
 
   for (int z = 0; z < duplication_factor*duplication_factor; z++) {
     for (int j = 0; j < 11; j++) {
