@@ -24,7 +24,7 @@ int main(int argc, char *argv[]) {
 
   for (int i = 0; i < 16; i++) {
     multibitwriter(&counter, buffer, (nums[i] & ((1 << (sizes[i]))-1)), sizes[i], fp);
-    //printf("called!\n");
+    printf("called!\n");
   }
 
   finishfilemulti(&counter, buffer, fp);

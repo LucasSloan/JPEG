@@ -168,17 +168,11 @@ void bitwriter(int* counter, uint8_t* buffer, bool bit, FILE* fp) {
 }
 
 void multibitwriter(int* counter, uint8_t* buffer, uint16_t input, uint8_t size, FILE* fp) {
-  uint16_t saved = input;
-  uint8_t savedsize = size;
   uint8_t temp = buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)];
   if (size <= (*counter%8 == 0 ? 8 : *counter%8)) {
-    ptemp;
     temp = temp + (input << ((*counter%8 == 0 ? 8 : *counter%8) - size));
-    ptemp;
     buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = temp;
-    pcounter;
     *counter = *counter - size;
-    pcounter;
     if (temp == 0xff) {
       *counter = *counter - 8;
       buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
@@ -186,80 +180,46 @@ void multibitwriter(int* counter, uint8_t* buffer, uint16_t input, uint8_t size,
   } else {
     temp += (input >> (size - (*counter%8 == 0 ? 8 : *counter%8)));
     buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = temp;
-    pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), temp);
     if (temp == 0xff) {
       *counter = *counter - 8;
-      pcounter;
       buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
-      pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), 0x00);
     }
     input = input & ~(0xffff << (size - (*counter%8 == 0 ? 8 : *counter%8)));
     size = size - (*counter%8 == 0 ? 8 : *counter%8);
     *counter = *counter - (*counter%8 == 0 ? 8 : *counter%8);
-    pcounter;
     if (size <= 8) {
       temp = input << (8 - size);
       buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = temp;
-      pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), temp);
       if (temp == 0xff) {
 	*counter = *counter - 8;
-        pcounter;
 	buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
-	pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), 0x00);
       }
       *counter -= size;
     } else {
       temp = input >> (size - 8);
       buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = temp;
-      pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), temp);
       if (temp == 0xff) {
 	*counter = *counter - 8;
-        pcounter;
 	buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
-	pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), 0x00);
       }
       input = input & ~(0xffff << (size - 8));
       size -= 8;
       temp = input << (8 - size);
-      pcounter;
       buffer[9 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = temp;
-      pwrote(9 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), temp);
       if (temp == 0xff) {
-	pcounter;
 	*counter = *counter - 8;
-        pcounter;
-	buffer[8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
-	pwrote(8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), 0x00);
+	buffer[9 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)] = 0x00;
       }
       *counter = *counter - 8 - size;
-      pcounter;
-    }
-  }
-  for (int i = 0; i < 8; i++) {
-    if (buffer[i] == 0xff && savedsize == 16) {
-        printf("counter: %d\n", *counter);
-        printf("size: %d\n", savedsize);
-	printf("the input that fucked it up is: %d\n", saved);
     }
   }
       
   if ((*counter) <= 32) {
     fwrite(buffer, sizeof(uint8_t), 4, fp);
-    for (int i = 0; i < ((savedsize == 16) ? 8 : 4); i++) {
-      for (int j = 7; j >= 0; j--) {
-	printf("%d", ((buffer[i]  & 1<<j) ? 1 : 0));
-      }
-      printf("\n");
-    }
     for (int i = 4; i < 8; i++) {
-      for (int j = 7; j >= 0; j--) {
-	//printf("%d", ((buffer[i]  & 1<<j) ? 1 : 0));
-      }
-      //printf("\n");
       buffer[i-4] = buffer[i];
       buffer[i] = 0;
     }
-    printf("\n");
     *counter += 32;
   }
 }
@@ -294,12 +254,13 @@ void finishfilemulti(int* counter, uint8_t* buffer, FILE* fp) {
   printf("counter: %d\n", *counter);
 
   if (*counter != 64) {
-    for (int i = 0; i < (8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)); i++) {
+    //printf("Should now push %d bytes remaining on the buffer\n", (8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)));
+    /*for (int i = 0; i <= (8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1)); i++) {
       for (int j = 7; j >= 0; j--) {
 	printf("%d", ((buffer[i]  & 1<<j) ? 1 : 0));
       }
       printf("\n");
-    }    
+      } */   
     fwrite(buffer, sizeof(uint8_t), 8 - ((*counter%8 == 0) ? *counter/8 : *counter/8 + 1), fp);
   }
 
