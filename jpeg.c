@@ -1,17 +1,17 @@
+#define buffersize 1024 //size, in bytes, of the write buffer
+#define bufferoverflow 4 //size, in bytes, of the write buffer's overflow
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "huffman.c"
 #include "jpeg.h"
 #include "bmptypes.h"
 #include "endian.h"
 #include "endian.c"
 #include "readbmp.h"
 #include "readbmp.c"
-#include "jpeg_header.h"
 #include <sys/time.h>
 #include <omp.h>
 #include <immintrin.h>
@@ -19,6 +19,9 @@
 
 int length[10] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
 
+/* Takes a bmp image specified at the command line and
+ * encodes it in JPEG format and writes to another file
+ * specified at the command line */
 int main(int argc, char *argv[]) {
   RGB** argb = (RGB**) malloc(sizeof(RGB*));
   UINT32* width = (UINT32*) malloc(sizeof(UINT32*));
@@ -28,6 +31,7 @@ int main(int argc, char *argv[]) {
   double time;
 
 
+  /* Command line switch for color and greyscale images */
   int num_colors = 3;
   if (argc == 4 && strcmp(argv[3],"-gs") == 0)
     num_colors = 1;
@@ -39,8 +43,10 @@ int main(int argc, char *argv[]) {
     return 2;
   }
 
-  gettimeofday(&tv3, 0);
   gettimeofday(&tv1, 0);
+  gettimeofday(&tv3, 0);
+  /* Uses a bmp library to read a bmp image into
+   * an array of RGB pixels. */
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
 
@@ -54,17 +60,18 @@ int main(int argc, char *argv[]) {
   RGB* image = *argb;
   RGB pixel;
 
+  /* Allocate memory for the JPEG color space, both
+   * precisely as floats and later as rounded integers. */
   float* Y = malloc(sizeof(float) * *width * *height);
   float* Cb = malloc(sizeof(float) * *width * *height);
   float* Cr = malloc(sizeof(float) * *width * *height);
-  float* Ye = malloc(sizeof(float) * *width * *height);
-  float* Cbe = malloc(sizeof(float) * *width * *height);
-  float* Cre = malloc(sizeof(float) * *width * *height);
-  int* Yout = malloc(sizeof(int) * *width * *height);
-  int* Cbout = malloc(sizeof(int) * *width * *height);
-  int* Crout = malloc(sizeof(int) * *width * *height);
+  int32_t* Yout = malloc(sizeof(int32_t) * *width * *height);
+  int32_t* Cbout = malloc(sizeof(int32_t) * *width * *height);
+  int32_t* Crout = malloc(sizeof(int32_t) * *width * *height);
 
   gettimeofday(&tv1, 0);
+  /* JPEG uses a non-RGB color space.  Y stores greyscale
+   * information, while Cb and Cr store color offsets. */
   for (int row = 0; row < *height; row++) {
     for (int col = 0; col < *width; col++) {
       pixel = image[row * *width + col];
@@ -81,13 +88,35 @@ int main(int argc, char *argv[]) {
 
   float cosvals[8][8];
 
+  /* Calculating cosines is expensive, and there
+   * are only 64 cosines that need to be calculated
+   * so precompute them and cache. */
   for (int i = 0; i < 8; i++) {
     for (int j = 0; j < 8; j++) {
-      cosvals[i][j] = cos(PI/8.0*(i+0.5)*j);
+      cosvals[i][j] = cos(PI/8.0*(i+0.5d)*j);
+    }
+  }
+
+  __m256 quant;
+  float lquant[8][8], cquant[8][8], qrow[8];
+
+  /* JPEG uses a quantization table to reduce the number
+   * of bits necessary to store the DCT frequencies as
+   * well as zero out frequencies that aren't important.
+   * The standard form of these tables is in a zigzag, which
+   * needs to be undone so that the AVX instructions can make
+   * use of them. */
+  for (int rrow = 0;  rrow < 8; rrow++) {
+    for (int ccol = 0; ccol < 8; ccol++) {
+      int pos = zigzag[rrow*8 + ccol];
+      lquant[pos/8][pos%8] = s_std_lum_quant[rrow*8+ccol];
+      cquant[pos/8][pos%8] = s_std_croma_quant[rrow*8+ccol];
     }
   }
 
   gettimeofday(&tv1, 0);
+  /* Separate the parallel from the for, so each processor gets its
+   * own copy of the buffers and variables. */
 #pragma omp parallel
 {
   float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
@@ -98,9 +127,13 @@ int main(int argc, char *argv[]) {
   __m256 minus128 = _mm256_set1_ps(-128.0);
   __m256 av = _mm256_loadu_ps(&avload[0]), au1 = _mm256_broadcast_ss(&avload[0]), au2 = _mm256_broadcast_ss(&avload[1]);
   __m256 avxcos;
+  __m256i integer;
 
   float writer[8];
+  int iwriter[8];
 
+  /* The DCT breaks the image into 8 by 8 blocks and then
+   * transforms them into color frequencies. */
 #pragma omp for
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
@@ -113,6 +146,12 @@ int main(int argc, char *argv[]) {
       row5 = _mm256_setzero_ps();
       row6 = _mm256_setzero_ps();
       row7 = _mm256_setzero_ps();
+
+      /* This pair of loops uses AVX instuctions to add the frequency
+       * component from each pixel to all of the buckets at once.  Allows
+       * us to do the DCT on a block in 64 iterations of a loop rather
+       * than 64 iterations of 64 iterations of a loop (all 64 pixels affect
+       * all 64 frequencies) */
       for (int x = 0; x < 8; x++) {
 	for (int y = 0; y < 8; y++) {
 	  loader = _mm256_broadcast_ss(&Y[head_pointer+x+(y * *width)]);
@@ -121,66 +160,112 @@ int main(int argc, char *argv[]) {
           avxcos = _mm256_loadu_ps(&cosvals[x][0]);
 	  loader = _mm256_mul_ps(loader, avxcos);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
-	  temp = _mm256_mul_ps(temp, au1);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row0 = _mm256_add_ps(row0, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
+	    temp = _mm256_mul_ps(temp, au1);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row0 = _mm256_add_ps(row0, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row1 = _mm256_add_ps(row1, temp);
+	    loader = _mm256_mul_ps(loader, au2);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row2 = _mm256_add_ps(row2, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row1 = _mm256_add_ps(row1, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row3 = _mm256_add_ps(row3, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row2 = _mm256_add_ps(row2, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row4 = _mm256_add_ps(row4, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row3 = _mm256_add_ps(row3, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row5 = _mm256_add_ps(row5, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row4 = _mm256_add_ps(row4, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row6 = _mm256_add_ps(row6, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row5 = _mm256_add_ps(row5, temp);
 
-          temp = loader;
-          avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
-	  temp = _mm256_mul_ps(temp, au2);
-          temp = _mm256_mul_ps(temp, avxcos);
-          row7 = _mm256_add_ps(row7, temp);
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row6 = _mm256_add_ps(row6, temp);
+
+	    temp = loader;
+	    avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+	    temp = _mm256_mul_ps(temp, avxcos);
+	    row7 = _mm256_add_ps(row7, temp);
+
 	}
       }
-      _mm256_storeu_ps(&Ye[head_pointer], row0);
-      _mm256_storeu_ps(&Ye[head_pointer + *width], row1);
-      _mm256_storeu_ps(&Ye[head_pointer + (2 * *width)], row2);
-      _mm256_storeu_ps(&Ye[head_pointer + (3 * *width)], row3);
-      _mm256_storeu_ps(&Ye[head_pointer + (4 * *width)], row4);
-      _mm256_storeu_ps(&Ye[head_pointer + (5 * *width)], row5);
-      _mm256_storeu_ps(&Ye[head_pointer + (6 * *width)], row6);
-      _mm256_storeu_ps(&Ye[head_pointer + (7 * *width)], row7);
+
+      /* Each frequency stored as a float needs to be divided by
+       * the quantization value, then rounded to the nearest integer.
+       * Also changes the order of the values from pixel order to
+       * each 8 by 8 block stored one after another. */
+      temp = _mm256_loadu_ps(&lquant[0][0]);
+      row0 = _mm256_div_ps(row0, temp);
+      row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row0);
+      _mm256_storeu_si256(Yout+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[1][0]);
+      row1 = _mm256_div_ps(row1, temp);
+      row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row1);
+      _mm256_storeu_si256(Yout+8+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[2][0]);
+      row2 = _mm256_div_ps(row2, temp);
+      row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row2);
+      _mm256_storeu_si256(Yout+16+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[3][0]);
+      row3 = _mm256_div_ps(row3, temp);
+      row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row3);
+      _mm256_storeu_si256(Yout+24+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[4][0]);
+      row4 = _mm256_div_ps(row4, temp);
+      row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row4);
+      _mm256_storeu_si256(Yout+32+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[5][0]);
+      row5 = _mm256_div_ps(row5, temp);
+      row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row5);
+      _mm256_storeu_si256(Yout+40+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[6][0]);
+      row6 = _mm256_div_ps(row6, temp);
+      row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row6);
+      _mm256_storeu_si256(Yout+48+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&lquant[7][0]);
+      row7 = _mm256_div_ps(row7, temp);
+      row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row7);
+      _mm256_storeu_si256(Yout+56+(bcol + brow * (*width/8))*64, integer);
+
+
     }
   }
 
+  /* Do the same for the other color values (Cb and Cr).
+   * Almost the same, but the color offsets use a different
+   * quantization table, as humans are less sensitive to
+   * changes in color than changes in luminosity. */
   if (num_colors > 1) {
 #pragma omp for
     for (int brow = 0; brow < *height/8; brow++) {
@@ -251,14 +336,53 @@ int main(int argc, char *argv[]) {
 	    row7 = _mm256_add_ps(row7, temp);
 	  }
 	}
-	_mm256_storeu_ps(&Cbe[head_pointer], row0);
-	_mm256_storeu_ps(&Cbe[head_pointer + *width], row1);
-	_mm256_storeu_ps(&Cbe[head_pointer + (2 * *width)], row2);
-	_mm256_storeu_ps(&Cbe[head_pointer + (3 * *width)], row3);
-	_mm256_storeu_ps(&Cbe[head_pointer + (4 * *width)], row4);
-	_mm256_storeu_ps(&Cbe[head_pointer + (5 * *width)], row5);
-	_mm256_storeu_ps(&Cbe[head_pointer + (6 * *width)], row6);
-	_mm256_storeu_ps(&Cbe[head_pointer + (7 * *width)], row7);
+      temp = _mm256_loadu_ps(&cquant[0][0]);
+      row0 = _mm256_div_ps(row0, temp);
+      row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row0);
+      _mm256_storeu_si256(Cbout+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[1][0]);
+      row1 = _mm256_div_ps(row1, temp);
+      row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row1);
+      _mm256_storeu_si256(Cbout+8+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[2][0]);
+      row2 = _mm256_div_ps(row2, temp);
+      row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row2);
+      _mm256_storeu_si256(Cbout+16+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[3][0]);
+      row3 = _mm256_div_ps(row3, temp);
+      row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row3);
+      _mm256_storeu_si256(Cbout+24+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[4][0]);
+      row4 = _mm256_div_ps(row4, temp);
+      row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row4);
+      _mm256_storeu_si256(Cbout+32+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[5][0]);
+      row5 = _mm256_div_ps(row5, temp);
+      row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row5);
+      _mm256_storeu_si256(Cbout+40+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[6][0]);
+      row6 = _mm256_div_ps(row6, temp);
+      row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row6);
+      _mm256_storeu_si256(Cbout+48+(bcol + brow * (*width/8))*64, integer);
+
+      temp = _mm256_loadu_ps(&cquant[7][0]);
+      row7 = _mm256_div_ps(row7, temp);
+      row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
+      integer = _mm256_cvttps_epi32(row7);
+      _mm256_storeu_si256(Cbout+56+(bcol + brow * (*width/8))*64, integer);
       }
     }
 #pragma omp for
@@ -330,19 +454,61 @@ int main(int argc, char *argv[]) {
 	    row7 = _mm256_add_ps(row7, temp);
 	  }
 	}
-	_mm256_storeu_ps(&Cre[head_pointer], row0);
-	_mm256_storeu_ps(&Cre[head_pointer + *width], row1);
-	_mm256_storeu_ps(&Cre[head_pointer + (2 * *width)], row2);
-	_mm256_storeu_ps(&Cre[head_pointer + (3 * *width)], row3);
-	_mm256_storeu_ps(&Cre[head_pointer + (4 * *width)], row4);
-	_mm256_storeu_ps(&Cre[head_pointer + (5 * *width)], row5);
-	_mm256_storeu_ps(&Cre[head_pointer + (6 * *width)], row6);
-	_mm256_storeu_ps(&Cre[head_pointer + (7 * *width)], row7);
+	temp = _mm256_loadu_ps(&cquant[0][0]);
+	row0 = _mm256_div_ps(row0, temp);
+	row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row0);
+	_mm256_storeu_si256(Crout+(bcol + brow * (*width/8))*64, integer);
+	
+	temp = _mm256_loadu_ps(&cquant[1][0]);
+	row1 = _mm256_div_ps(row1, temp);
+	row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row1);
+	_mm256_storeu_si256(Crout+8+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[2][0]);
+	row2 = _mm256_div_ps(row2, temp);
+	row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row2);
+	_mm256_storeu_si256(Crout+16+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[3][0]);
+	row3 = _mm256_div_ps(row3, temp);
+	row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row3);
+	_mm256_storeu_si256(Crout+24+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[4][0]);
+	row4 = _mm256_div_ps(row4, temp);
+	row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row4);
+	_mm256_storeu_si256(Crout+32+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[5][0]);
+	row5 = _mm256_div_ps(row5, temp);
+	row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row5);
+	_mm256_storeu_si256(Crout+40+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[6][0]);
+	row6 = _mm256_div_ps(row6, temp);
+	row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row6);
+	_mm256_storeu_si256(Crout+48+(bcol + brow * (*width/8))*64, integer);
+
+	temp = _mm256_loadu_ps(&cquant[7][0]);
+	row7 = _mm256_div_ps(row7, temp);
+	row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
+	integer = _mm256_cvttps_epi32(row7);
+	_mm256_storeu_si256(Crout+56+(bcol + brow * (*width/8))*64, integer);
       }
     }
   }
  }
 
+  free(Y);
+  free(Cb);
+  free(Cr);
 
   gettimeofday(&tv2, 0);
 
@@ -350,33 +516,18 @@ int main(int argc, char *argv[]) {
 
   printf("DCT: %f seconds.\n", time);
 
-  gettimeofday(&tv1, 0);
-  for (int brow = 0; brow < *height/8; brow++) {
-    for (int bcol = 0; bcol < *width/8; bcol++) {
-      int head_pointer = bcol*8 + brow * 8 * *width;
-      for (int rrow = 0;  rrow < 8; rrow++) {
-        for (int ccol = 0; ccol < 8; ccol++) {
-          int pos = zigzag[rrow*8 + ccol];
-          Yout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Ye[head_pointer + (pos/8 * *width) + pos%8] / s_std_lum_quant[rrow*8+ccol]);
-          Cbout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cbe[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[rrow*8+ccol]);
-          Crout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cre[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[rrow*8+ccol]);
-	}
-      }
-    }
-  }
-  gettimeofday(&tv2, 0);
-
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  printf("Quantize: %f seconds.\n", time);
-
   int run = 0;
   int amplitude;
   int* sout;
-  int counter = 7;
-  uint8_t buffer = 0;
+  int counter = 8*(buffersize+bufferoverflow); //initialized to buffer size, in bits
+  uint8_t* buffer = malloc(sizeof(uint8_t) * (buffersize+bufferoverflow));
+  uint8_t btemp = 0;
   int lastdc[3] = {0, 0, 0};
   int ac_array;
+
+  for (int i = 0; i < 8; i++) {
+    buffer[i] = 0;
+  }
 
   uint16_t** codes = malloc(sizeof(uint16_t*) * 4);
   uint8_t** sizes = malloc(sizeof(uint8_t*) * 4);
@@ -389,6 +540,13 @@ int main(int argc, char *argv[]) {
   fp = fopen(argv[2], "wb");
 
   gettimeofday(&tv1, 0);
+
+  /* JPEG has a standard file format, with a header defining
+   * the file type, the size of the image, the quantization tables
+   * used to round the color values, and the huffman tables used to
+   * store the information in a variable length code.  Function also
+   * initializes the huffman code and size table used in the encoding
+   * of the image data. */
   output_header(fp, *height, *width, num_colors, codes, sizes);
   gettimeofday(&tv2, 0);
 
@@ -397,6 +555,17 @@ int main(int argc, char *argv[]) {
   printf("Generate headers: %f seconds.\n", time);
 
   gettimeofday(&tv1, 0);
+
+  /* Outputs the frequency information using variable length encoding.
+   * The first frequency (DC value) is encoded separately from the
+   * remaining (AC values). Each value is encoded in two parts.  The
+   * first encodes the order of magnitude of the value (both types)
+   * and the number of zero valued frequencies preceding this one
+   * (AC values).  This is then encoded using a huffman table.  The
+   * second encodes the precise value of the
+   * frequency, with the exact number of bits stored varying with
+   * order of magnitude previously described. */
+   
   for (int z = 0; z < *height * *width; z += 64) {
     for (int w = 0; w < num_colors; w++) {
       if (w == 0) {
@@ -411,50 +580,38 @@ int main(int argc, char *argv[]) {
       }
       for (int j = 0; j < 11; j++) {
 	if ((sout[0] - lastdc[w]) < length[j] && (sout[0] - lastdc[w]) > -length[j]) {
-	  for (int k = sizes[ac_array+1][j]-1; k >= 0; k--) {
-	    bitwriter(&counter, &buffer, (bool) ((codes[ac_array+1][j] & 1<<k) ? 1 : 0), fp);
-	  }
+          multibitwriter(&counter, buffer, codes[ac_array+1][j], sizes[ac_array+1][j], &btemp, fp);
 	  if ((sout[0] - lastdc[w]) > 0)
 	    amplitude = (1<<(j-1)) + ((sout[0] - lastdc[w]) - length[j-1]);
 	  else
 	    amplitude = length[j] + (sout[0] - lastdc[w]) - 1;
-	  for (int i = j-1; i >= 0; i--) {
-	    bitwriter(&counter, &buffer, (bool) ((amplitude & 1<<i) ? 1 : 0), fp);
-	  }
+          multibitwriter(&counter, buffer, amplitude, j, &btemp, fp);
 	  lastdc[w] = sout[0];
 	  break;
 	}
       }
 
       for (int i = 1; i < 64; i++) {
-	if (sout[i] == 0) {
+	if (sout[zigzag[i]] == 0) {
 	  run++;
 	  if (i == 63 && run > 0) {
-	    for (int k = sizes[ac_array][0x00]-1; k >= 0; k--) {
-	      bitwriter(&counter, &buffer, (bool) ((codes[ac_array][0x00] & 1<<k) ? 1 : 0), fp);
-	    }
+	    multibitwriter(&counter, buffer, codes[ac_array][0x00], sizes[ac_array][0x00], &btemp, fp);
 	    run = 0;
 	  }
 	  continue;
 	}
 	for (int j = 1; j < 11; j++) {
-	  if (sout[i] < length[j] && sout[i] > -length[j]) {
+	  if (sout[zigzag[i]] < length[j] && sout[zigzag[i]] > -length[j]) {
 	    while (run > 15) {
-	      for (int k = sizes[ac_array][0xf0]-1; k >= 0; k--) {
-		bitwriter(&counter, &buffer, (bool) ((codes[ac_array][0xf0] & 1<<k) ? 1 : 0), fp);
-	      }
+	      multibitwriter(&counter, buffer, codes[ac_array][0xf0], sizes[ac_array][0xf0], &btemp, fp);
 	      run -= 16;
 	    }
-	    for (int k = sizes[ac_array][(run<<4) + j]-1; k >= 0; k--) {
-	      bitwriter(&counter, &buffer, (bool) ((codes[ac_array][(run<<4) + j] & 1<<k) ? 1 : 0), fp);
-	    }
-	    if (sout[i] > 0)
-	      amplitude = (1<<(j-1)) + (sout[i] - length[j-1]);
+	    multibitwriter(&counter, buffer, codes[ac_array][(run<<4) + j], sizes[ac_array][(run<<4) + j], &btemp, fp);
+	    if (sout[zigzag[i]] > 0)
+	      amplitude = (1<<(j-1)) + (sout[zigzag[i]] - length[j-1]);
 	    else
-	      amplitude = length[j] + sout[i] - 1;
-	    for (int k = j-1; k >= 0; k--) {
-	      bitwriter(&counter, &buffer, (bool) ((amplitude & 1<<k) ? 1 : 0), fp);
-	    }
+	      amplitude = length[j] + sout[zigzag[i]] - 1;
+	    multibitwriter(&counter, buffer, amplitude, j, &btemp, fp);
 	    run = 0;
 	    break;
 	  }
@@ -462,17 +619,33 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+  /* Flush the bits remaining on the buffer,
+   * put an end of file marker and close the file. */
+  finishfilemulti(&counter, buffer, btemp, fp);
+
   gettimeofday(&tv2, 0);
 
   time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   printf("Write to file: %f seconds.\n", time);
 
-  finishfile(&counter, &buffer, fp);
-
   gettimeofday(&tv4, 0);
   time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
 
   printf("Total: %f seconds.\n", time);
 
+  /* Free all remaining memory. */
+  free(argb);
+  free(width);
+  free(height);
+  free(Yout);
+  free(Cbout);
+  free(Crout);
+  for (int i = 0; i < ((num_colors > 1) ? 4 : 2); i++) {
+    free(codes[i]);
+    free(sizes[i]);
+  }
+  free(codes);
+  free(sizes);
+  free(buffer);
 }

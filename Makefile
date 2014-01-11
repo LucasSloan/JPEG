@@ -1,5 +1,5 @@
 all:
-	gcc -std=c99 jpeg.c -lm -fopenmp -march=native -O3 -o jpeg
+	gcc -std=c99 jpeg_new_writer.c -fopenmp -lm -w -march=native -O3 -o jpeg_beta
 
 beta:
 	gcc -std=c99 jpeg_no_quant.c -fopenmp -lm -w -march=native -O3 -o jpeg_beta
@@ -15,3 +15,6 @@ writer:
 
 wtest:
 	gcc -std=c99 mulitbitwritertest.c -o mbtest
+
+compare:
+	gcc -std=c99 test_harness.c -fopenmp -lm -w -march=native -O3 -o comparison

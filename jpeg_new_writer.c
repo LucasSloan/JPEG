@@ -6,14 +6,12 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "huffman.c"
 #include "jpeg.h"
 #include "bmptypes.h"
 #include "endian.h"
 #include "endian.c"
 #include "readbmp.h"
 #include "readbmp.c"
-#include "jpeg_header.h"
 #include <sys/time.h>
 #include <omp.h>
 #include <immintrin.h>
@@ -21,6 +19,9 @@
 
 int length[10] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
 
+/* Takes a bmp image specified at the command line and
+ * encodes it in JPEG format and writes to another file
+ * specified at the command line */
 int main(int argc, char *argv[]) {
   RGB** argb = (RGB**) malloc(sizeof(RGB*));
   UINT32* width = (UINT32*) malloc(sizeof(UINT32*));
@@ -30,6 +31,7 @@ int main(int argc, char *argv[]) {
   double time;
 
 
+  /* Command line switch for color and greyscale images */
   int num_colors = 3;
   if (argc == 4 && strcmp(argv[3],"-gs") == 0)
     num_colors = 1;
@@ -43,6 +45,8 @@ int main(int argc, char *argv[]) {
 
   gettimeofday(&tv1, 0);
   gettimeofday(&tv3, 0);
+  /* Uses a bmp library to read a bmp image into
+   * an array of RGB pixels. */
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
 
@@ -56,6 +60,8 @@ int main(int argc, char *argv[]) {
   RGB* image = *argb;
   RGB pixel;
 
+  /* Allocate memory for the JPEG color space, both
+   * precisely as floats and later as rounded integers. */
   float* Y = malloc(sizeof(float) * *width * *height);
   float* Cb = malloc(sizeof(float) * *width * *height);
   float* Cr = malloc(sizeof(float) * *width * *height);
@@ -64,6 +70,8 @@ int main(int argc, char *argv[]) {
   int32_t* Crout = malloc(sizeof(int32_t) * *width * *height);
 
   gettimeofday(&tv1, 0);
+  /* JPEG uses a non-RGB color space.  Y stores greyscale
+   * information, while Cb and Cr store color offsets. */
   for (int row = 0; row < *height; row++) {
     for (int col = 0; col < *width; col++) {
       pixel = image[row * *width + col];
@@ -79,18 +87,25 @@ int main(int argc, char *argv[]) {
   printf("Transform colorspace: %f seconds.\n", time);
 
   float cosvals[8][8];
-  float cosvalsm[8][8];
 
+  /* Calculating cosines is expensive, and there
+   * are only 64 cosines that need to be calculated
+   * so precompute them and cache. */
   for (int i = 0; i < 8; i++) {
     for (int j = 0; j < 8; j++) {
       cosvals[i][j] = cos(PI/8.0*(i+0.5d)*j);
-      cosvalsm[i][j] = -cos(PI/8.0*(i+0.5d)*j);
     }
   }
 
   __m256 quant;
   float lquant[8][8], cquant[8][8], qrow[8];
 
+  /* JPEG uses a quantization table to reduce the number
+   * of bits necessary to store the DCT frequencies as
+   * well as zero out frequencies that aren't important.
+   * The standard form of these tables is in a zigzag, which
+   * needs to be undone so that the AVX instructions can make
+   * use of them. */
   for (int rrow = 0;  rrow < 8; rrow++) {
     for (int ccol = 0; ccol < 8; ccol++) {
       int pos = zigzag[rrow*8 + ccol];
@@ -99,15 +114,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /*for (int i = 0; i < 8; i++) {
-    quant = _mm256_loadu_ps(&lquant[i][0]);
-    _mm256_storeu_ps(qrow, quant);
-    printf("%d %f %f %f %f %f %f %f %f\n", i, qrow[0], qrow[1], qrow[2], qrow[3], qrow[4], qrow[5], qrow[6], qrow[7]);
-    }*/
-
-
-
   gettimeofday(&tv1, 0);
+  /* Separate the parallel from the for, so each processor gets its
+   * own copy of the buffers and variables. */
 #pragma omp parallel
 {
   float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
@@ -123,6 +132,8 @@ int main(int argc, char *argv[]) {
   float writer[8];
   int iwriter[8];
 
+  /* The DCT breaks the image into 8 by 8 blocks and then
+   * transforms them into color frequencies. */
 #pragma omp for
   for (int brow = 0; brow < *height/8; brow++) {
     for (int bcol = 0; bcol < *width/8; bcol++) {
@@ -135,6 +146,12 @@ int main(int argc, char *argv[]) {
       row5 = _mm256_setzero_ps();
       row6 = _mm256_setzero_ps();
       row7 = _mm256_setzero_ps();
+
+      /* This pair of loops uses AVX instuctions to add the frequency
+       * component from each pixel to all of the buckets at once.  Allows
+       * us to do the DCT on a block in 64 iterations of a loop rather
+       * than 64 iterations of 64 iterations of a loop (all 64 pixels affect
+       * all 64 frequencies) */
       for (int x = 0; x < 8; x++) {
 	for (int y = 0; y < 8; y++) {
 	  loader = _mm256_broadcast_ss(&Y[head_pointer+x+(y * *width)]);
@@ -188,15 +205,11 @@ int main(int argc, char *argv[]) {
 
 	}
       }
-      /*_mm256_storeu_ps(&Yfloat[head_pointer], row0);
-      _mm256_storeu_ps(&Yfloat[head_pointer + *width], row1);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (2 * *width)], row2);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (3 * *width)], row3);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (4 * *width)], row4);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (5 * *width)], row5);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (6 * *width)], row6);
-      _mm256_storeu_ps(&Yfloat[head_pointer + (7 * *width)], row7);*/
 
+      /* Each frequency stored as a float needs to be divided by
+       * the quantization value, then rounded to the nearest integer.
+       * Also changes the order of the values from pixel order to
+       * each 8 by 8 block stored one after another. */
       temp = _mm256_loadu_ps(&lquant[0][0]);
       row0 = _mm256_div_ps(row0, temp);
       row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
@@ -249,6 +262,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Do the same for the other color values (Cb and Cr).
+   * Almost the same, but the color offsets use a different
+   * quantization table, as humans are less sensitive to
+   * changes in color than changes in luminosity. */
   if (num_colors > 1) {
 #pragma omp for
     for (int brow = 0; brow < *height/8; brow++) {
@@ -366,14 +383,6 @@ int main(int argc, char *argv[]) {
       row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
       integer = _mm256_cvttps_epi32(row7);
       _mm256_storeu_si256(Cbout+56+(bcol + brow * (*width/8))*64, integer);
-	/*_mm256_storeu_ps(&Cbe[head_pointer], row0);
-	_mm256_storeu_ps(&Cbe[head_pointer + *width], row1);
-	_mm256_storeu_ps(&Cbe[head_pointer + (2 * *width)], row2);
-	_mm256_storeu_ps(&Cbe[head_pointer + (3 * *width)], row3);
-	_mm256_storeu_ps(&Cbe[head_pointer + (4 * *width)], row4);
-	_mm256_storeu_ps(&Cbe[head_pointer + (5 * *width)], row5);
-	_mm256_storeu_ps(&Cbe[head_pointer + (6 * *width)], row6);
-	_mm256_storeu_ps(&Cbe[head_pointer + (7 * *width)], row7);*/
       }
     }
 #pragma omp for
@@ -492,20 +501,14 @@ int main(int argc, char *argv[]) {
 	row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
 	integer = _mm256_cvttps_epi32(row7);
 	_mm256_storeu_si256(Crout+56+(bcol + brow * (*width/8))*64, integer);
-
-	/*_mm256_storeu_ps(&Cre[head_pointer], row0);
-	_mm256_storeu_ps(&Cre[head_pointer + *width], row1);
-	_mm256_storeu_ps(&Cre[head_pointer + (2 * *width)], row2);
-	_mm256_storeu_ps(&Cre[head_pointer + (3 * *width)], row3);
-	_mm256_storeu_ps(&Cre[head_pointer + (4 * *width)], row4);
-	_mm256_storeu_ps(&Cre[head_pointer + (5 * *width)], row5);
-	_mm256_storeu_ps(&Cre[head_pointer + (6 * *width)], row6);
-	_mm256_storeu_ps(&Cre[head_pointer + (7 * *width)], row7);*/
       }
     }
   }
  }
 
+  free(Y);
+  free(Cb);
+  free(Cr);
 
   gettimeofday(&tv2, 0);
 
@@ -513,31 +516,12 @@ int main(int argc, char *argv[]) {
 
   printf("DCT: %f seconds.\n", time);
 
-  /*  gettimeofday(&tv1, 0);
-  for (int brow = 0; brow < *height/8; brow++) {
-    for (int bcol = 0; bcol < *width/8; bcol++) {
-      int head_pointer = bcol*8 + brow * 8 * *width;
-      for (int rrow = 0;  rrow < 8; rrow++) {
-        for (int ccol = 0; ccol < 8; ccol++) {
-          int pos = zigzag[rrow*8 + ccol];
-          Yout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = Yint[head_pointer + (pos/8 * *width) + pos%8];
-          //Cbout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cbe[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[pos]);
-          //Crout[(bcol + brow * (*width/8))*64 + (rrow * 8) + ccol] = round(Cre[head_pointer + (pos/8 * *width) + pos%8] / s_std_croma_quant[pos]);
-	}
-      }
-    }
-  }
-  gettimeofday(&tv2, 0);
-
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  printf("Quantize: %f seconds.\n", time);*/
-
   int run = 0;
   int amplitude;
   int* sout;
   int counter = 8*(buffersize+bufferoverflow); //initialized to buffer size, in bits
   uint8_t* buffer = malloc(sizeof(uint8_t) * (buffersize+bufferoverflow));
+  uint8_t btemp = 0;
   int lastdc[3] = {0, 0, 0};
   int ac_array;
 
@@ -556,6 +540,13 @@ int main(int argc, char *argv[]) {
   fp = fopen(argv[2], "wb");
 
   gettimeofday(&tv1, 0);
+
+  /* JPEG has a standard file format, with a header defining
+   * the file type, the size of the image, the quantization tables
+   * used to round the color values, and the huffman tables used to
+   * store the information in a variable length code.  Function also
+   * initializes the huffman code and size table used in the encoding
+   * of the image data. */
   output_header(fp, *height, *width, num_colors, codes, sizes);
   gettimeofday(&tv2, 0);
 
@@ -564,6 +555,17 @@ int main(int argc, char *argv[]) {
   printf("Generate headers: %f seconds.\n", time);
 
   gettimeofday(&tv1, 0);
+
+  /* Outputs the frequency information using variable length encoding.
+   * The first frequency (DC value) is encoded separately from the
+   * remaining (AC values). Each value is encoded in two parts.  The
+   * first encodes the order of magnitude of the value (both types)
+   * and the number of zero valued frequencies preceding this one
+   * (AC values).  This is then encoded using a huffman table.  The
+   * second encodes the precise value of the
+   * frequency, with the exact number of bits stored varying with
+   * order of magnitude previously described. */
+   
   for (int z = 0; z < *height * *width; z += 64) {
     for (int w = 0; w < num_colors; w++) {
       if (w == 0) {
@@ -578,12 +580,12 @@ int main(int argc, char *argv[]) {
       }
       for (int j = 0; j < 11; j++) {
 	if ((sout[0] - lastdc[w]) < length[j] && (sout[0] - lastdc[w]) > -length[j]) {
-          multibitwriter(&counter, buffer, codes[ac_array+1][j], sizes[ac_array+1][j], fp);
+          multibitwriter(&counter, buffer, codes[ac_array+1][j], sizes[ac_array+1][j], &btemp, fp);
 	  if ((sout[0] - lastdc[w]) > 0)
 	    amplitude = (1<<(j-1)) + ((sout[0] - lastdc[w]) - length[j-1]);
 	  else
 	    amplitude = length[j] + (sout[0] - lastdc[w]) - 1;
-          multibitwriter(&counter, buffer, amplitude, j, fp);
+          multibitwriter(&counter, buffer, amplitude, j, &btemp, fp);
 	  lastdc[w] = sout[0];
 	  break;
 	}
@@ -593,7 +595,7 @@ int main(int argc, char *argv[]) {
 	if (sout[zigzag[i]] == 0) {
 	  run++;
 	  if (i == 63 && run > 0) {
-	    multibitwriter(&counter, buffer, codes[ac_array][0x00], sizes[ac_array][0x00], fp);
+	    multibitwriter(&counter, buffer, codes[ac_array][0x00], sizes[ac_array][0x00], &btemp, fp);
 	    run = 0;
 	  }
 	  continue;
@@ -601,15 +603,15 @@ int main(int argc, char *argv[]) {
 	for (int j = 1; j < 11; j++) {
 	  if (sout[zigzag[i]] < length[j] && sout[zigzag[i]] > -length[j]) {
 	    while (run > 15) {
-	      multibitwriter(&counter, buffer, codes[ac_array][0xf0], sizes[ac_array][0xf0], fp);
+	      multibitwriter(&counter, buffer, codes[ac_array][0xf0], sizes[ac_array][0xf0], &btemp, fp);
 	      run -= 16;
 	    }
-	    multibitwriter(&counter, buffer, codes[ac_array][(run<<4) + j], sizes[ac_array][(run<<4) + j], fp);
+	    multibitwriter(&counter, buffer, codes[ac_array][(run<<4) + j], sizes[ac_array][(run<<4) + j], &btemp, fp);
 	    if (sout[zigzag[i]] > 0)
 	      amplitude = (1<<(j-1)) + (sout[zigzag[i]] - length[j-1]);
 	    else
 	      amplitude = length[j] + sout[zigzag[i]] - 1;
-	    multibitwriter(&counter, buffer, amplitude, j, fp);
+	    multibitwriter(&counter, buffer, amplitude, j, &btemp, fp);
 	    run = 0;
 	    break;
 	  }
@@ -617,17 +619,33 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+  /* Flush the bits remaining on the buffer,
+   * put an end of file marker and close the file. */
+  finishfilemulti(&counter, buffer, btemp, fp);
+
   gettimeofday(&tv2, 0);
 
   time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   printf("Write to file: %f seconds.\n", time);
 
-  finishfilemulti(&counter, buffer, fp);
-
   gettimeofday(&tv4, 0);
   time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
 
   printf("Total: %f seconds.\n", time);
 
+  /* Free all remaining memory. */
+  free(argb);
+  free(width);
+  free(height);
+  free(Yout);
+  free(Cbout);
+  free(Crout);
+  for (int i = 0; i < ((num_colors > 1) ? 4 : 2); i++) {
+    free(codes[i]);
+    free(sizes[i]);
+  }
+  free(codes);
+  free(sizes);
+  free(buffer);
 }
