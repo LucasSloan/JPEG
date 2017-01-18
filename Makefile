@@ -1,20 +1,10 @@
-all:
-	gcc -std=c99 jpeg_new_writer.c -fopenmp -lm -w -march=native -O3 -o jpeg_beta
+cli:
+	gcc -std=c99 cli.c -fopenmp -lm -w -march=native -O3 -o jpeg
 
-beta:
-	gcc -std=c99 jpeg_no_quant.c -fopenmp -lm -w -march=native -O3 -o jpeg_beta
+test:
+	gcc -std=c99 test.c -fopenmp -lm -w -march=native -O3 -o test
+	./test
+	rm test lena.jpg
 
-debug:
-	gcc -std=c99 jpeg.c -g -lm -fopenmp -march=native -o jpeg
-
-dct:
-	gcc -std=c99 DCT.c -lm -o DCT
-
-writer:
-	gcc -std=c99 jpeg_new_writer.c -fopenmp -lm -w -march=native -O3 -o jpeg_beta
-
-wtest:
-	gcc -std=c99 mulitbitwritertest.c -o mbtest
-
-compare:
-	gcc -std=c99 test_harness.c -fopenmp -lm -w -march=native -O3 -o comparison
+clean:
+	rm test jpeg lena.jpg
