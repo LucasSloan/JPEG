@@ -533,6 +533,65 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
     printf("DCT: %f seconds.\n", time);
   }
 
+  fp = fopen(output, "wb");
+
+  gettimeofday(&tv1, 0);
+
+  /* JPEG has a standard file format, with a header defining
+   * the file type, the size of the image, the quantization tables
+   * used to round the color values, and the huffman tables used to
+   * store the information in a variable length code. */
+  output_header(fp, *height, *width, num_colors);
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  if (print_timings)
+  {
+    printf("Generate headers: %f seconds.\n", time);
+  }
+
+  gettimeofday(&tv1, 0);
+
+  write_out(fp, *height, *width, num_colors, Yout, Cbout, Crout);
+
+  gettimeofday(&tv2, 0);
+
+  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
+
+  if (print_timings)
+  {
+    printf("Write to file: %f seconds.\n", time);
+  }
+
+  gettimeofday(&tv4, 0);
+  time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
+
+  if (print_timings)
+  {
+    printf("Total: %f seconds.\n", time);
+  }
+
+  /* Free all remaining memory. */
+  free(argb);
+  free(width);
+  free(height);
+  free(Yout);
+  free(Cbout);
+  free(Crout);
+}
+
+/* Outputs the frequency information using variable length encoding.
+ * The first frequency (DC value) is encoded separately from the
+ * remaining (AC values). Each value is encoded in two parts.  The
+ * first encodes the order of magnitude of the value (both types)
+ * and the number of zero valued frequencies preceding this one
+ * (AC values).  This is then encoded using a huffman table.  The
+ * second encodes the precise value of the
+ * frequency, with the exact number of bits stored varying with
+ * order of magnitude previously described. */
+void write_out(FILE *fp, int height, int width, int num_colors, int32_t *Yout, int32_t *Cbout, int32_t *Crout)
+{
   int run = 0;
   int amplitude;
   int *sout;
@@ -557,37 +616,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   }
   generate_huffman_tables(num_colors, codes, sizes);
 
-  fp = fopen(output, "wb");
-
-  gettimeofday(&tv1, 0);
-
-  /* JPEG has a standard file format, with a header defining
-   * the file type, the size of the image, the quantization tables
-   * used to round the color values, and the huffman tables used to
-   * store the information in a variable length code. */
-  output_header(fp, *height, *width, num_colors);
-  gettimeofday(&tv2, 0);
-
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Generate headers: %f seconds.\n", time);
-  }
-
-  gettimeofday(&tv1, 0);
-
-  /* Outputs the frequency information using variable length encoding.
-   * The first frequency (DC value) is encoded separately from the
-   * remaining (AC values). Each value is encoded in two parts.  The
-   * first encodes the order of magnitude of the value (both types)
-   * and the number of zero valued frequencies preceding this one
-   * (AC values).  This is then encoded using a huffman table.  The
-   * second encodes the precise value of the
-   * frequency, with the exact number of bits stored varying with
-   * order of magnitude previously described. */
-
-  for (int z = 0; z < *height * *width; z += 64)
+  for (int z = 0; z < height * width; z += 64)
   {
     for (int w = 0; w < num_colors; w++)
     {
@@ -659,30 +688,6 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
    * put an end of file marker and close the file. */
   finishfilemulti(&counter, buffer, btemp, fp);
 
-  gettimeofday(&tv2, 0);
-
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Write to file: %f seconds.\n", time);
-  }
-
-  gettimeofday(&tv4, 0);
-  time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Total: %f seconds.\n", time);
-  }
-
-  /* Free all remaining memory. */
-  free(argb);
-  free(width);
-  free(height);
-  free(Yout);
-  free(Cbout);
-  free(Crout);
   for (int i = 0; i < ((num_colors > 1) ? 4 : 2); i++)
   {
     free(codes[i]);
