@@ -1,4 +1,4 @@
-#define runcount 10
+#define runcount 100
 #include "jpeg.c"
 
 /* Takes a bmp image specified at the command line and
@@ -11,15 +11,26 @@ int main(int argc, char *argv[])
     char *output = "lena.jpg";
 
     struct timeval tv1, tv2;
+    float read_bmp, transform_colorspace, dct, generate_headers, write_file;
 
     gettimeofday(&tv1, 0);
     for (int i = 0; i < runcount; i++) {
-        convertFile(input, output, num_colors, false);
+        JPEGTimings timings = convertFile(input, output, num_colors, false);
+        read_bmp += timings.read_bmp;
+        transform_colorspace += timings.transform_colorspace;
+        dct += timings.dct;
+        generate_headers += timings.generate_headers;
+        write_file += timings.write_file;
     }
     gettimeofday(&tv2, 0);
 
     double time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
     printf("Average time accoss %d runs: %f seconds.\n", runcount, time / runcount);
+    printf("Read BMP: %f seconds.\n", read_bmp / runcount);
+    printf("Transform colorspace: %f seconds.\n", transform_colorspace / runcount);
+    printf("DCT: %f seconds.\n", dct / runcount);
+    printf("Generate headers: %f seconds.\n", generate_headers / runcount);
+    printf("Write to file: %f seconds.\n", write_file / runcount);
 
     compareFiles(output, "lena_golden.jpg");
 }

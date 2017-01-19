@@ -17,23 +17,33 @@
 #include <immintrin.h>
 #define PI 3.14159265358979323846
 
+typedef struct _JPEGTimings
+{
+  float read_bmp;
+  float transform_colorspace;
+  float dct;
+  float generate_headers;
+  float write_file;
+  float total;
+} JPEGTimings;
+
 int length[10] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
 
-int convertFile(char *input, char *output, int num_colors, bool print_timings)
+JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_timings)
 {
   RGB **argb = (RGB **)malloc(sizeof(RGB *));
   UINT32 *width = (UINT32 *)malloc(sizeof(UINT32 *));
   UINT32 *height = (UINT32 *)malloc(sizeof(UINT32 *));
   FILE *fp;
   struct timeval tv1, tv2, tv3, tv4;
-  double time;
+  JPEGTimings timings;
 
   fp = fopen(input, "rb");
 
   if (fp == NULL)
   {
     perror("Error opening source file");
-    return 2;
+    return timings;
   }
 
   gettimeofday(&tv1, 0);
@@ -43,12 +53,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
 
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Read BMP: %f seconds.\n", time);
-  }
+  timings.read_bmp = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   fclose(fp);
 
@@ -75,12 +80,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   }
   gettimeofday(&tv2, 0);
 
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Transform colorspace: %f seconds.\n", time);
-  }
+  timings.transform_colorspace = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv1, 0);
 
@@ -120,12 +120,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
 
   gettimeofday(&tv2, 0);
 
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("DCT: %f seconds.\n", time);
-  }
+  timings.dct = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   fp = fopen(output, "wb");
 
@@ -138,12 +133,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   output_header(fp, *height, *width, num_colors);
   gettimeofday(&tv2, 0);
 
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Generate headers: %f seconds.\n", time);
-  }
+  timings.generate_headers = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv1, 0);
 
@@ -151,20 +141,10 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
 
   gettimeofday(&tv2, 0);
 
-  time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Write to file: %f seconds.\n", time);
-  }
+  timings.write_file = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv4, 0);
-  time = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
-
-  if (print_timings)
-  {
-    printf("Total: %f seconds.\n", time);
-  }
+  timings.total = tv4.tv_sec - tv3.tv_sec + 1e-6 * (tv4.tv_usec - tv3.tv_usec);
 
   /* Free all remaining memory. */
   free(argb);
@@ -173,6 +153,8 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   free(Yout);
   free(Cbout);
   free(Crout);
+
+  return timings;
 }
 
 void run_dct(int width, int height,float *quant, float *input, int32_t *output)
