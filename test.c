@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
     char *output = "lena.jpg";
 
     struct timeval tv1, tv2;
-    float read_bmp, transform_colorspace, dct, generate_headers, write_file;
+    float read_bmp = 0, transform_colorspace = 0, dct = 0, generate_headers = 0, write_file = 0;
 
     gettimeofday(&tv1, 0);
     for (int i = 0; i < runcount; i++) {
