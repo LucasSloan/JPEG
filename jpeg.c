@@ -55,14 +55,10 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   RGB *image = *argb;
   RGB pixel;
 
-  /* Allocate memory for the JPEG color space, both
-   * precisely as floats and later as rounded integers. */
+  /* Allocate memory for the JPEG color space as floats. */
   float *Y = malloc(sizeof(float) * *width * *height);
   float *Cb = malloc(sizeof(float) * *width * *height);
   float *Cr = malloc(sizeof(float) * *width * *height);
-  int32_t *Yout = malloc(sizeof(int32_t) * *width * *height);
-  int32_t *Cbout = malloc(sizeof(int32_t) * *width * *height);
-  int32_t *Crout = malloc(sizeof(int32_t) * *width * *height);
 
   gettimeofday(&tv1, 0);
   /* JPEG uses a non-RGB color space.  Y stores greyscale
@@ -86,21 +82,14 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
     printf("Transform colorspace: %f seconds.\n", time);
   }
 
-  float cosvals[8][8];
+  gettimeofday(&tv1, 0);
 
-  /* Calculating cosines is expensive, and there
-   * are only 64 cosines that need to be calculated
-   * so precompute them and cache. */
-  for (int i = 0; i < 8; i++)
-  {
-    for (int j = 0; j < 8; j++)
-    {
-      cosvals[i][j] = cos(PI / 8.0 * (i + 0.5d) * j);
-    }
-  }
+  /* Allocate memory for the JPEG color space as rounded integers. */
+  int32_t *Yout = malloc(sizeof(int32_t) * *width * *height);
+  int32_t *Cbout = malloc(sizeof(int32_t) * *width * *height);
+  int32_t *Crout = malloc(sizeof(int32_t) * *width * *height);
 
-  __m256 quant;
-  float lquant[8][8], cquant[8][8], qrow[8];
+  float lquant[8][8], cquant[8][8];
 
   /* JPEG uses a quantization table to reduce the number
    * of bits necessary to store the DCT frequencies as
@@ -118,406 +107,11 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
     }
   }
 
-  gettimeofday(&tv1, 0);
-/* Separate the parallel from the for, so each processor gets its
-   * own copy of the buffers and variables. */
-#pragma omp parallel
+  run_dct(*height, *width, lquant, Y, Yout);
+  if (num_colors > 1)
   {
-    float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
-    avload[0] = sqrt(1.0 / 8.0);
-    __m256 row0, row1, row2, row3, row4, row5, row6, row7;
-    __m256 loader;
-    __m256 temp;
-    __m256 minus128 = _mm256_set1_ps(-128.0);
-    __m256 av = _mm256_loadu_ps(&avload[0]), au1 = _mm256_broadcast_ss(&avload[0]), au2 = _mm256_broadcast_ss(&avload[1]);
-    __m256 avxcos;
-    __m256i integer;
-
-    float writer[8];
-    int iwriter[8];
-
-/* The DCT breaks the image into 8 by 8 blocks and then
-   * transforms them into color frequencies. */
-#pragma omp for
-    for (int brow = 0; brow < *height / 8; brow++)
-    {
-      for (int bcol = 0; bcol < *width / 8; bcol++)
-      {
-        int head_pointer = bcol * 8 + brow * 8 * *width;
-        row0 = _mm256_setzero_ps();
-        row1 = _mm256_setzero_ps();
-        row2 = _mm256_setzero_ps();
-        row3 = _mm256_setzero_ps();
-        row4 = _mm256_setzero_ps();
-        row5 = _mm256_setzero_ps();
-        row6 = _mm256_setzero_ps();
-        row7 = _mm256_setzero_ps();
-
-        /* This pair of loops uses AVX instuctions to add the frequency
-       * component from each pixel to all of the buckets at once.  Allows
-       * us to do the DCT on a block in 64 iterations of a loop rather
-       * than 64 iterations of 64 iterations of a loop (all 64 pixels affect
-       * all 64 frequencies) */
-        for (int x = 0; x < 8; x++)
-        {
-          for (int y = 0; y < 8; y++)
-          {
-            loader = _mm256_broadcast_ss(&Y[head_pointer + x + (y * *width)]);
-            loader = _mm256_add_ps(loader, minus128);
-            loader = _mm256_mul_ps(loader, av);
-            avxcos = _mm256_loadu_ps(&cosvals[x][0]);
-            loader = _mm256_mul_ps(loader, avxcos);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
-            temp = _mm256_mul_ps(temp, au1);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row0 = _mm256_add_ps(row0, temp);
-
-            loader = _mm256_mul_ps(loader, au2);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row1 = _mm256_add_ps(row1, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row2 = _mm256_add_ps(row2, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row3 = _mm256_add_ps(row3, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row4 = _mm256_add_ps(row4, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row5 = _mm256_add_ps(row5, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row6 = _mm256_add_ps(row6, temp);
-
-            temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
-            temp = _mm256_mul_ps(temp, avxcos);
-            row7 = _mm256_add_ps(row7, temp);
-          }
-        }
-
-        /* Each frequency stored as a float needs to be divided by
-       * the quantization value, then rounded to the nearest integer.
-       * Also changes the order of the values from pixel order to
-       * each 8 by 8 block stored one after another. */
-        temp = _mm256_loadu_ps(&lquant[0][0]);
-        row0 = _mm256_div_ps(row0, temp);
-        row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row0);
-        _mm256_storeu_si256(Yout + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[1][0]);
-        row1 = _mm256_div_ps(row1, temp);
-        row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row1);
-        _mm256_storeu_si256(Yout + 8 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[2][0]);
-        row2 = _mm256_div_ps(row2, temp);
-        row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row2);
-        _mm256_storeu_si256(Yout + 16 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[3][0]);
-        row3 = _mm256_div_ps(row3, temp);
-        row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row3);
-        _mm256_storeu_si256(Yout + 24 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[4][0]);
-        row4 = _mm256_div_ps(row4, temp);
-        row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row4);
-        _mm256_storeu_si256(Yout + 32 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[5][0]);
-        row5 = _mm256_div_ps(row5, temp);
-        row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row5);
-        _mm256_storeu_si256(Yout + 40 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[6][0]);
-        row6 = _mm256_div_ps(row6, temp);
-        row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row6);
-        _mm256_storeu_si256(Yout + 48 + (bcol + brow * (*width / 8)) * 64, integer);
-
-        temp = _mm256_loadu_ps(&lquant[7][0]);
-        row7 = _mm256_div_ps(row7, temp);
-        row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
-        integer = _mm256_cvttps_epi32(row7);
-        _mm256_storeu_si256(Yout + 56 + (bcol + brow * (*width / 8)) * 64, integer);
-      }
-    }
-
-    /* Do the same for the other color values (Cb and Cr).
-   * Almost the same, but the color offsets use a different
-   * quantization table, as humans are less sensitive to
-   * changes in color than changes in luminosity. */
-    if (num_colors > 1)
-    {
-#pragma omp for
-      for (int brow = 0; brow < *height / 8; brow++)
-      {
-        for (int bcol = 0; bcol < *width / 8; bcol++)
-        {
-          int head_pointer = bcol * 8 + brow * 8 * *width;
-          row0 = _mm256_setzero_ps();
-          row1 = _mm256_setzero_ps();
-          row2 = _mm256_setzero_ps();
-          row3 = _mm256_setzero_ps();
-          row4 = _mm256_setzero_ps();
-          row5 = _mm256_setzero_ps();
-          row6 = _mm256_setzero_ps();
-          row7 = _mm256_setzero_ps();
-          for (int x = 0; x < 8; x++)
-          {
-            for (int y = 0; y < 8; y++)
-            {
-              loader = _mm256_broadcast_ss(&Cb[head_pointer + x + (y * *width)]);
-              loader = _mm256_add_ps(loader, minus128);
-              loader = _mm256_mul_ps(loader, av);
-              avxcos = _mm256_loadu_ps(&cosvals[x][0]);
-              loader = _mm256_mul_ps(loader, avxcos);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
-              temp = _mm256_mul_ps(temp, au1);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row0 = _mm256_add_ps(row0, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row1 = _mm256_add_ps(row1, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row2 = _mm256_add_ps(row2, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row3 = _mm256_add_ps(row3, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row4 = _mm256_add_ps(row4, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row5 = _mm256_add_ps(row5, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row6 = _mm256_add_ps(row6, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row7 = _mm256_add_ps(row7, temp);
-            }
-          }
-          temp = _mm256_loadu_ps(&cquant[0][0]);
-          row0 = _mm256_div_ps(row0, temp);
-          row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row0);
-          _mm256_storeu_si256(Cbout + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[1][0]);
-          row1 = _mm256_div_ps(row1, temp);
-          row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row1);
-          _mm256_storeu_si256(Cbout + 8 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[2][0]);
-          row2 = _mm256_div_ps(row2, temp);
-          row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row2);
-          _mm256_storeu_si256(Cbout + 16 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[3][0]);
-          row3 = _mm256_div_ps(row3, temp);
-          row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row3);
-          _mm256_storeu_si256(Cbout + 24 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[4][0]);
-          row4 = _mm256_div_ps(row4, temp);
-          row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row4);
-          _mm256_storeu_si256(Cbout + 32 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[5][0]);
-          row5 = _mm256_div_ps(row5, temp);
-          row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row5);
-          _mm256_storeu_si256(Cbout + 40 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[6][0]);
-          row6 = _mm256_div_ps(row6, temp);
-          row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row6);
-          _mm256_storeu_si256(Cbout + 48 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[7][0]);
-          row7 = _mm256_div_ps(row7, temp);
-          row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row7);
-          _mm256_storeu_si256(Cbout + 56 + (bcol + brow * (*width / 8)) * 64, integer);
-        }
-      }
-#pragma omp for
-      for (int brow = 0; brow < *height / 8; brow++)
-      {
-        for (int bcol = 0; bcol < *width / 8; bcol++)
-        {
-          int head_pointer = bcol * 8 + brow * 8 * *width;
-          row0 = _mm256_setzero_ps();
-          row1 = _mm256_setzero_ps();
-          row2 = _mm256_setzero_ps();
-          row3 = _mm256_setzero_ps();
-          row4 = _mm256_setzero_ps();
-          row5 = _mm256_setzero_ps();
-          row6 = _mm256_setzero_ps();
-          row7 = _mm256_setzero_ps();
-          for (int x = 0; x < 8; x++)
-          {
-            for (int y = 0; y < 8; y++)
-            {
-              loader = _mm256_broadcast_ss(&Cr[head_pointer + x + (y * *width)]);
-              loader = _mm256_add_ps(loader, minus128);
-              loader = _mm256_mul_ps(loader, av);
-              avxcos = _mm256_loadu_ps(&cosvals[x][0]);
-              loader = _mm256_mul_ps(loader, avxcos);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
-              temp = _mm256_mul_ps(temp, au1);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row0 = _mm256_add_ps(row0, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row1 = _mm256_add_ps(row1, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row2 = _mm256_add_ps(row2, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row3 = _mm256_add_ps(row3, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row4 = _mm256_add_ps(row4, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row5 = _mm256_add_ps(row5, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row6 = _mm256_add_ps(row6, temp);
-
-              temp = loader;
-              avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
-              temp = _mm256_mul_ps(temp, au2);
-              temp = _mm256_mul_ps(temp, avxcos);
-              row7 = _mm256_add_ps(row7, temp);
-            }
-          }
-          temp = _mm256_loadu_ps(&cquant[0][0]);
-          row0 = _mm256_div_ps(row0, temp);
-          row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row0);
-          _mm256_storeu_si256(Crout + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[1][0]);
-          row1 = _mm256_div_ps(row1, temp);
-          row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row1);
-          _mm256_storeu_si256(Crout + 8 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[2][0]);
-          row2 = _mm256_div_ps(row2, temp);
-          row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row2);
-          _mm256_storeu_si256(Crout + 16 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[3][0]);
-          row3 = _mm256_div_ps(row3, temp);
-          row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row3);
-          _mm256_storeu_si256(Crout + 24 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[4][0]);
-          row4 = _mm256_div_ps(row4, temp);
-          row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row4);
-          _mm256_storeu_si256(Crout + 32 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[5][0]);
-          row5 = _mm256_div_ps(row5, temp);
-          row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row5);
-          _mm256_storeu_si256(Crout + 40 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[6][0]);
-          row6 = _mm256_div_ps(row6, temp);
-          row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row6);
-          _mm256_storeu_si256(Crout + 48 + (bcol + brow * (*width / 8)) * 64, integer);
-
-          temp = _mm256_loadu_ps(&cquant[7][0]);
-          row7 = _mm256_div_ps(row7, temp);
-          row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
-          integer = _mm256_cvttps_epi32(row7);
-          _mm256_storeu_si256(Crout + 56 + (bcol + brow * (*width / 8)) * 64, integer);
-        }
-      }
-    }
+    run_dct(*height, *width, cquant, Cb, Cbout);
+    run_dct(*height, *width, cquant, Cr, Crout);
   }
 
   free(Y);
@@ -579,6 +173,171 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   free(Yout);
   free(Cbout);
   free(Crout);
+}
+
+void run_dct(int width, int height,float *quant, float *input, int32_t *output)
+{
+  float cosvals[8][8];
+
+  /* Calculating cosines is expensive, and there
+   * are only 64 cosines that need to be calculated
+   * so precompute them and cache. */
+  for (int i = 0; i < 8; i++)
+  {
+    for (int j = 0; j < 8; j++)
+    {
+      cosvals[i][j] = cos(PI / 8.0 * (i + 0.5d) * j);
+    }
+  }
+
+/* Separate the parallel from the for, so each processor gets its
+   * own copy of the buffers and variables. */
+#pragma omp parallel
+  {
+    float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
+    avload[0] = sqrt(1.0 / 8.0);
+    __m256 row0, row1, row2, row3, row4, row5, row6, row7;
+    __m256 loader;
+    __m256 temp;
+    __m256 minus128 = _mm256_set1_ps(-128.0);
+    __m256 av = _mm256_loadu_ps(&avload[0]), au1 = _mm256_broadcast_ss(&avload[0]), au2 = _mm256_broadcast_ss(&avload[1]);
+    __m256 avxcos;
+    __m256i integer;
+
+    float writer[8];
+    int iwriter[8];
+
+    /* The DCT breaks the image into 8 by 8 blocks and then
+   * transforms them into color frequencies. */
+#pragma omp for
+    for (int brow = 0; brow < height / 8; brow++)
+    {
+      for (int bcol = 0; bcol < width / 8; bcol++)
+      {
+        int head_pointer = bcol * 8 + brow * 8 * width;
+        row0 = _mm256_setzero_ps();
+        row1 = _mm256_setzero_ps();
+        row2 = _mm256_setzero_ps();
+        row3 = _mm256_setzero_ps();
+        row4 = _mm256_setzero_ps();
+        row5 = _mm256_setzero_ps();
+        row6 = _mm256_setzero_ps();
+        row7 = _mm256_setzero_ps();
+
+        /* This pair of loops uses AVX instuctions to add the frequency
+       * component from each pixel to all of the buckets at once.  Allows
+       * us to do the DCT on a block in 64 iterations of a loop rather
+       * than 64 iterations of 64 iterations of a loop (all 64 pixels affect
+       * all 64 frequencies) */
+        for (int x = 0; x < 8; x++)
+        {
+          for (int y = 0; y < 8; y++)
+          {
+            loader = _mm256_broadcast_ss(&input[head_pointer + x + (y * width)]);
+            loader = _mm256_add_ps(loader, minus128);
+            loader = _mm256_mul_ps(loader, av);
+            avxcos = _mm256_loadu_ps(&cosvals[x][0]);
+            loader = _mm256_mul_ps(loader, avxcos);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
+            temp = _mm256_mul_ps(temp, au1);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row0 = _mm256_add_ps(row0, temp);
+
+            loader = _mm256_mul_ps(loader, au2);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row1 = _mm256_add_ps(row1, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row2 = _mm256_add_ps(row2, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row3 = _mm256_add_ps(row3, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row4 = _mm256_add_ps(row4, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row5 = _mm256_add_ps(row5, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row6 = _mm256_add_ps(row6, temp);
+
+            temp = loader;
+            avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+            temp = _mm256_mul_ps(temp, avxcos);
+            row7 = _mm256_add_ps(row7, temp);
+          }
+        }
+
+        /* Each frequency stored as a float needs to be divided by
+       * the quantization value, then rounded to the nearest integer.
+       * Also changes the order of the values from pixel order to
+       * each 8 by 8 block stored one after another. */
+        temp = _mm256_loadu_ps(&quant[0]);
+        row0 = _mm256_div_ps(row0, temp);
+        row0 = _mm256_round_ps(row0, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row0);
+        _mm256_storeu_si256(output + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[8]);
+        row1 = _mm256_div_ps(row1, temp);
+        row1 = _mm256_round_ps(row1, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row1);
+        _mm256_storeu_si256(output + 8 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[16]);
+        row2 = _mm256_div_ps(row2, temp);
+        row2 = _mm256_round_ps(row2, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row2);
+        _mm256_storeu_si256(output + 16 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[24]);
+        row3 = _mm256_div_ps(row3, temp);
+        row3 = _mm256_round_ps(row3, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row3);
+        _mm256_storeu_si256(output + 24 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[32]);
+        row4 = _mm256_div_ps(row4, temp);
+        row4 = _mm256_round_ps(row4, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row4);
+        _mm256_storeu_si256(output + 32 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[40]);
+        row5 = _mm256_div_ps(row5, temp);
+        row5 = _mm256_round_ps(row5, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row5);
+        _mm256_storeu_si256(output + 40 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[48]);
+        row6 = _mm256_div_ps(row6, temp);
+        row6 = _mm256_round_ps(row6, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row6);
+        _mm256_storeu_si256(output + 48 + (bcol + brow * (width / 8)) * 64, integer);
+
+        temp = _mm256_loadu_ps(&quant[56]);
+        row7 = _mm256_div_ps(row7, temp);
+        row7 = _mm256_round_ps(row7, _MM_FROUND_TO_NEAREST_INT);
+        integer = _mm256_cvttps_epi32(row7);
+        _mm256_storeu_si256(output + 56 + (bcol + brow * (width / 8)) * 64, integer);
+      }
+    }
+  }
 }
 
 /* Outputs the frequency information using variable length encoding.
