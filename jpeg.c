@@ -47,12 +47,12 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
   }
 
   gettimeofday(&tv1, 0);
+  
   gettimeofday(&tv3, 0);
   /* Uses a bmp library to read a bmp image into
    * an array of RGB pixels. */
   readSingleImageBMP(fp, argb, width, height);
   gettimeofday(&tv2, 0);
-
   timings.read_bmp = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   fclose(fp);
@@ -79,7 +79,6 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
     }
   }
   gettimeofday(&tv2, 0);
-
   timings.transform_colorspace = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv1, 0);
@@ -119,28 +118,22 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
   free(Cr);
 
   gettimeofday(&tv2, 0);
-
   timings.dct = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   fp = fopen(output, "wb");
 
   gettimeofday(&tv1, 0);
-
   /* JPEG has a standard file format, with a header defining
    * the file type, the size of the image, the quantization tables
    * used to round the color values, and the huffman tables used to
    * store the information in a variable length code. */
   output_header(fp, *height, *width, num_colors);
   gettimeofday(&tv2, 0);
-
   timings.generate_headers = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv1, 0);
-
   write_out(fp, *height, *width, num_colors, Yout, Cbout, Crout);
-
   gettimeofday(&tv2, 0);
-
   timings.write_file = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);
 
   gettimeofday(&tv4, 0);
