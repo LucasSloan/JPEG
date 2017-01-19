@@ -555,6 +555,7 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
     codes[i] = malloc(sizeof(uint16_t) * 256);
     sizes[i] = malloc(sizeof(uint8_t) * 256);
   }
+  generate_huffman_tables(num_colors, codes, sizes);
 
   fp = fopen(output, "wb");
 
@@ -563,10 +564,8 @@ int convertFile(char *input, char *output, int num_colors, bool print_timings)
   /* JPEG has a standard file format, with a header defining
    * the file type, the size of the image, the quantization tables
    * used to round the color values, and the huffman tables used to
-   * store the information in a variable length code.  Function also
-   * initializes the huffman code and size table used in the encoding
-   * of the image data. */
-  output_header(fp, *height, *width, num_colors, codes, sizes);
+   * store the information in a variable length code. */
+  output_header(fp, *height, *width, num_colors);
   gettimeofday(&tv2, 0);
 
   time = tv2.tv_sec - tv1.tv_sec + 1e-6 * (tv2.tv_usec - tv1.tv_usec);

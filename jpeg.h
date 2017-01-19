@@ -97,6 +97,17 @@ void compute_huffman_table(uint16_t *codes, uint8_t *code_sizes, uint8_t *bits, 
   }
 }
 
+void generate_huffman_tables(int num_colors, uint16_t **codes, uint8_t **sizes) {
+  compute_huffman_table(codes[0], sizes[0], s_ac_lum_bits, s_ac_lum_val);
+  compute_huffman_table(codes[1], sizes[1], s_dc_lum_bits, s_dc_lum_val);
+
+  if (num_colors > 1)
+  {
+    compute_huffman_table(codes[2], sizes[2], s_ac_chroma_bits, s_ac_chroma_val);
+    compute_huffman_table(codes[3], sizes[3], s_dc_chroma_bits, s_dc_chroma_val);
+  }
+}
+
 typedef struct _SOI
 {
   uint8_t SOI[2];
@@ -404,17 +415,8 @@ void finishfilemulti(int *counter, uint8_t *buffer, uint8_t temp, FILE *fp)
  * num_colors - 1 if greyscale, 3 if color
  * codes - array of arrays of huffman codes
  * sizes - array of arrays of sizes of corresponding codes */
-void output_header(FILE *fp, int height, int width, int num_colors, uint16_t **codes, uint8_t **sizes)
+void output_header(FILE *fp, int height, int width, int num_colors)
 {
-  compute_huffman_table(codes[0], sizes[0], s_ac_lum_bits, s_ac_lum_val);
-  compute_huffman_table(codes[1], sizes[1], s_dc_lum_bits, s_dc_lum_val);
-
-  if (num_colors > 1)
-  {
-    compute_huffman_table(codes[2], sizes[2], s_ac_chroma_bits, s_ac_chroma_val);
-    compute_huffman_table(codes[3], sizes[3], s_dc_chroma_bits, s_dc_chroma_val);
-  }
-
   SOI soi;
 
   soi.SOI[0] = 0xff;
