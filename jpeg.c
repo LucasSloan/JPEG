@@ -177,7 +177,7 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
     float avload[8] = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
     avload[0] = sqrt(1.0 / 8.0);
     __m256 row0, row1, row2, row3, row4, row5, row6, row7;
-    __m256 loader;
+    __m256 loaderlow, loaderhigh;
     __m256 temp;
     __m256 minus128 = _mm256_set1_ps(-128.0);
     __m256 avxcos;
@@ -210,52 +210,64 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
        * all 64 frequencies) */
         for (int x = 0; x < 8; x++)
         {
-          for (int y = 0; y < 8; y++)
+          for (int y = 0; y < 4; y++)
           {
-            loader = _mm256_broadcast_ss(&input[head_pointer + x + (y * width)]);
-            loader = _mm256_add_ps(loader, minus128);
-            avxcos = _mm256_loadu_ps(&acosvals[x][0]);
-            loader = _mm256_mul_ps(loader, avxcos);
+            loaderlow = _mm256_broadcast_ss(&input[head_pointer + x + (y * width)]);
+            loaderlow = _mm256_add_ps(loaderlow, minus128);
+            loaderhigh = _mm256_broadcast_ss(&input[head_pointer + x + ((7 - y) * width)]);
+            loaderhigh = _mm256_add_ps(loaderhigh, minus128);
 
-            temp = loader;
+            avxcos = _mm256_loadu_ps(&acosvals[x][0]);
+            loaderlow = _mm256_mul_ps(loaderlow, avxcos);
+            loaderhigh = _mm256_mul_ps(loaderhigh, avxcos);
+
             avxcos = _mm256_broadcast_ss(&acosvals[y][0]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
+            row0 = _mm256_add_ps(row0, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
             row0 = _mm256_add_ps(row0, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][1]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
             row1 = _mm256_add_ps(row1, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
+            row1 = _mm256_sub_ps(row1, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][2]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
+            row2 = _mm256_add_ps(row2, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
             row2 = _mm256_add_ps(row2, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][3]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
             row3 = _mm256_add_ps(row3, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
+            row3 = _mm256_sub_ps(row3, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][4]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
+            row4 = _mm256_add_ps(row4, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
             row4 = _mm256_add_ps(row4, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][5]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
             row5 = _mm256_add_ps(row5, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
+            row5 = _mm256_sub_ps(row5, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][6]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
+            row6 = _mm256_add_ps(row6, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
             row6 = _mm256_add_ps(row6, temp);
 
-            temp = loader;
             avxcos = _mm256_broadcast_ss(&acosvals[y][7]);
-            temp = _mm256_mul_ps(temp, avxcos);
+            temp = _mm256_mul_ps(loaderlow, avxcos);
             row7 = _mm256_add_ps(row7, temp);
+            temp = _mm256_mul_ps(loaderhigh, avxcos);
+            row7 = _mm256_sub_ps(row7, temp);
           }
         }
 
