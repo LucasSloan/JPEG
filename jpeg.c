@@ -183,9 +183,6 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
     __m256 avxcos;
     __m256i integer;
 
-    float writer[8];
-    int iwriter[8];
-
     /* The DCT breaks the image into 8 by 8 blocks and then
    * transforms them into color frequencies. */
 #pragma omp for
