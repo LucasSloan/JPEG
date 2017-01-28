@@ -180,7 +180,8 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
     __m256 loaderlow, loaderhigh;
     __m256 temp;
     __m256 minus128 = _mm256_set1_ps(-128.0);
-    __m256 avxcos;
+    __m256 avxcosloader, avxcos;
+    float avxcosmover;
     __m256i integer;
 
     /* The DCT breaks the image into 8 by 8 blocks and then
@@ -218,49 +219,59 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
             loaderlow = _mm256_mul_ps(loaderlow, avxcos);
             loaderhigh = _mm256_mul_ps(loaderhigh, avxcos);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][0]);
+            avxcosloader = _mm256_loadu_ps(&acosvals[y][0]);
+
+            avxcosmover = avxcosloader[0];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row0 = _mm256_add_ps(row0, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row0 = _mm256_add_ps(row0, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][1]);
+            avxcosmover = avxcosloader[1];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row1 = _mm256_add_ps(row1, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row1 = _mm256_sub_ps(row1, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][2]);
+            avxcosmover = avxcosloader[2];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row2 = _mm256_add_ps(row2, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row2 = _mm256_add_ps(row2, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][3]);
+            avxcosmover = avxcosloader[3];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row3 = _mm256_add_ps(row3, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row3 = _mm256_sub_ps(row3, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][4]);
+            avxcosmover = avxcosloader[4];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row4 = _mm256_add_ps(row4, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row4 = _mm256_add_ps(row4, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][5]);
+            avxcosmover = avxcosloader[5];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row5 = _mm256_add_ps(row5, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row5 = _mm256_sub_ps(row5, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][6]);
+            avxcosmover = avxcosloader[6];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row6 = _mm256_add_ps(row6, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
             row6 = _mm256_add_ps(row6, temp);
 
-            avxcos = _mm256_broadcast_ss(&acosvals[y][7]);
+            avxcosmover = avxcosloader[7];
+            avxcos = _mm256_set1_ps(avxcosmover);
             temp = _mm256_mul_ps(loaderlow, avxcos);
             row7 = _mm256_add_ps(row7, temp);
             temp = _mm256_mul_ps(loaderhigh, avxcos);
