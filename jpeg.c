@@ -152,7 +152,7 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
 
 void run_dct(int width, int height,float *quant, float *input, int32_t *output)
 {
-  float cosvals[8][8];
+  float acosvals[8][8];
 
   /* Calculating cosines is expensive, and there
    * are only 64 cosines that need to be calculated
@@ -161,7 +161,12 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
   {
     for (int j = 0; j < 8; j++)
     {
-      cosvals[i][j] = cos(PI / 8.0 * (i + 0.5d) * j);
+      if (j == 0) {
+        acosvals[i][j] = sqrt(1.0 / 8.0) * cos(PI / 8.0 * (i + 0.5d) * j);
+      }
+      else {
+        acosvals[i][j] = 0.5 * cos(PI / 8.0 * (i + 0.5d) * j);
+      }
     }
   }
 
@@ -175,7 +180,6 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
     __m256 loader;
     __m256 temp;
     __m256 minus128 = _mm256_set1_ps(-128.0);
-    __m256 av = _mm256_loadu_ps(&avload[0]), au1 = _mm256_broadcast_ss(&avload[0]), au2 = _mm256_broadcast_ss(&avload[1]);
     __m256 avxcos;
     __m256i integer;
 
@@ -210,50 +214,46 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
           {
             loader = _mm256_broadcast_ss(&input[head_pointer + x + (y * width)]);
             loader = _mm256_add_ps(loader, minus128);
-            loader = _mm256_mul_ps(loader, av);
-            avxcos = _mm256_loadu_ps(&cosvals[x][0]);
+            avxcos = _mm256_loadu_ps(&acosvals[x][0]);
             loader = _mm256_mul_ps(loader, avxcos);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][0]);
-            temp = _mm256_mul_ps(temp, au1);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][0]);
             temp = _mm256_mul_ps(temp, avxcos);
             row0 = _mm256_add_ps(row0, temp);
 
-            loader = _mm256_mul_ps(loader, au2);
-
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][1]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][1]);
             temp = _mm256_mul_ps(temp, avxcos);
             row1 = _mm256_add_ps(row1, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][2]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][2]);
             temp = _mm256_mul_ps(temp, avxcos);
             row2 = _mm256_add_ps(row2, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][3]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][3]);
             temp = _mm256_mul_ps(temp, avxcos);
             row3 = _mm256_add_ps(row3, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][4]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][4]);
             temp = _mm256_mul_ps(temp, avxcos);
             row4 = _mm256_add_ps(row4, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][5]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][5]);
             temp = _mm256_mul_ps(temp, avxcos);
             row5 = _mm256_add_ps(row5, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][6]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][6]);
             temp = _mm256_mul_ps(temp, avxcos);
             row6 = _mm256_add_ps(row6, temp);
 
             temp = loader;
-            avxcos = _mm256_broadcast_ss(&cosvals[y][7]);
+            avxcos = _mm256_broadcast_ss(&acosvals[y][7]);
             temp = _mm256_mul_ps(temp, avxcos);
             row7 = _mm256_add_ps(row7, temp);
           }
