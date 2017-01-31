@@ -47,7 +47,7 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
   }
 
   gettimeofday(&tv1, 0);
-  
+
   gettimeofday(&tv3, 0);
   /* Uses a bmp library to read a bmp image into
    * an array of RGB pixels. */
@@ -106,12 +106,21 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
     }
   }
 
+#ifdef UNOPTIMIZED
+  unoptimized_run_dct(*height, *width, lquant, Y, Yout);
+  if (num_colors > 1)
+  {
+    unoptimized_run_dct(*height, *width, cquant, Cb, Cbout);
+    unoptimized_run_dct(*height, *width, cquant, Cr, Crout);
+  }
+#else
   run_dct(*height, *width, lquant, Y, Yout);
   if (num_colors > 1)
   {
     run_dct(*height, *width, cquant, Cb, Cbout);
     run_dct(*height, *width, cquant, Cr, Crout);
   }
+#endif
 
   free(Y);
   free(Cb);
@@ -150,7 +159,40 @@ JPEGTimings convertFile(char *input, char *output, int num_colors, bool print_ti
   return timings;
 }
 
-void run_dct(int width, int height,float *quant, float *input, int32_t *output)
+void unoptimized_run_dct(int width, int height, float *quant, float *input, int32_t *output)
+{
+  for (int brow = 0; brow < height / 8; brow++)
+  {
+    for (int bcol = 0; bcol < width / 8; bcol++)
+    {
+      for (int u = 0; u < 8; u++)
+      {
+        for (int v = 0; v < 8; v++)
+        {
+          float temp = 0;
+          for (int x = 0; x < 8; x++)
+          {
+            for (int y = 0; y < 8; y++)
+            {
+              int input_pointer = bcol * 8 + brow * 8 * width + x + (y * width);
+              float input_value = input[input_pointer];
+              float cosux = cos((2.0 * x + 1.0) * u * PI / 16.0);
+              float cosvy = cos((2.0 * y + 1.0) * v * PI / 16.0);
+              temp += (input_value - 128.0) * cosux * cosvy;
+            }
+          }
+          float quant_val = quant[u + v * 8];
+          int output_pointer = (bcol + brow * (width / 8)) * 64 + u + v * 8;
+          float au = (u == 0 ? sqrt(1.0 / 2.0) : 1);
+          float av = (v == 0 ? sqrt(1.0 / 2.0) : 1);
+          output[output_pointer] = round((0.25 * au * av * temp) / quant_val);
+        }
+      }
+    }
+  }
+}
+
+void run_dct(int width, int height, float *quant, float *input, int32_t *output)
 {
   float acosvals[8][8];
 
@@ -161,10 +203,12 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
   {
     for (int j = 0; j < 8; j++)
     {
-      if (j == 0) {
+      if (j == 0)
+      {
         acosvals[i][j] = sqrt(1.0 / 8.0) * cos(PI / 8.0 * (i + 0.5d) * j);
       }
-      else {
+      else
+      {
         acosvals[i][j] = 0.5 * cos(PI / 8.0 * (i + 0.5d) * j);
       }
     }
@@ -184,7 +228,7 @@ void run_dct(int width, int height,float *quant, float *input, int32_t *output)
     float avxcosmover;
     __m256i integer;
 
-    /* The DCT breaks the image into 8 by 8 blocks and then
+/* The DCT breaks the image into 8 by 8 blocks and then
    * transforms them into color frequencies. */
 #pragma omp for
     for (int brow = 0; brow < height / 8; brow++)
