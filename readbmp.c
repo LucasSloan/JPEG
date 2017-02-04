@@ -117,7 +117,7 @@ int readBitmapHeader(FILE *fp, BITMAPHEADER *bh)
      */
     if (oldFormat)
     {
-	rc = readINT16little(fp, &tempVal);
+    rc = (int) readINT16little(fp, &tempVal);
 	if (rc != 0)
 	    return rc;
 	bh->width = tempVal;
@@ -135,7 +135,7 @@ int readBitmapHeader(FILE *fp, BITMAPHEADER *bh)
     
     if (oldFormat)
     {
-	rc = readINT16little(fp, &tempVal);
+    rc = (int) readINT16little(fp, &tempVal);
 	if (rc != 0)
 	    return rc;
 	bh->height = tempVal;
@@ -380,7 +380,7 @@ int readBitsUncompressed(FILE *fp, RGB *image, int width, int height,
 	{
 	    for (column = width; column > 0; column -= 8)
 	    {
-		rc = readINT8little(fp, &temp);
+		rc = (int) readINT8little(fp, &temp);
 		if (rc != 0)
 		    return rc;
 		for (i=0; i < ((column < 8) ? column : 8); i++)
@@ -592,7 +592,7 @@ int readMaskBitsUncompressed(FILE *fp, char *image, int width, int height)
     {
 	for (column = width; column > 0; column -= 8)
 	{
-	    rc = readINT8little(fp, &temp);
+	    rc = (int) readINT8little(fp, &temp);
 	    if (rc != 0)
 		return rc;
 	    for (i=0; i < ((column < 8) ? column : 8); i++)
