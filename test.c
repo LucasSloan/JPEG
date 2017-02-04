@@ -1,4 +1,3 @@
-#define runcount 100
 #include "jpeg.c"
 
 /* Takes a bmp image specified at the command line and
@@ -6,6 +5,7 @@
  * specified at the command line */
 int main(int argc, char *argv[])
 {
+    int runcount = atoi(argv[1]);
     int num_colors = 3;
     char *input = "lena.bmp";
     char *output = "lena.jpg";
